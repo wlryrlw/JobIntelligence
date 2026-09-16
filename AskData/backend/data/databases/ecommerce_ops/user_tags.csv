@@ -1,0 +1,17 @@
+﻿tag_id,tag_name,tag_type,enabled
+TAG01,高价值用户,value,1
+TAG02,价格敏感,preference,1
+TAG03,新品偏好,preference,1
+TAG04,数码爱好者,category,1
+TAG05,美妆人群,category,1
+TAG06,母婴家庭,category,1
+TAG07,运动达人,category,1
+TAG08,沉睡用户,lifecycle,1
+TAG09,新注册,lifecycle,1
+TAG10,高退款风险,risk,1
+TAG11,直播活跃,behavior,1
+TAG12,优惠券偏好,behavior,1
+TAG13,复购用户,lifecycle,1
+TAG14,大促活跃,behavior,1
+TAG15,企业采购,identity,1
+TAG16,内容种草,behavior,1

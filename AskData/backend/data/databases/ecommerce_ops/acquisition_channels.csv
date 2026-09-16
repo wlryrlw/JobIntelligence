@@ -1,0 +1,13 @@
+﻿channel_id,channel_name,channel_type,channel_group,enabled
+CH01,自然访问,organic,站内,1
+CH02,搜索广告,paid_search,广告,1
+CH03,信息流广告,paid_social,广告,1
+CH04,短视频达人,influencer,内容,1
+CH05,直播间,live,内容,1
+CH06,短信召回,sms,私域,1
+CH07,公众号,wechat,私域,1
+CH08,应用商店,app_store,自然,1
+CH09,好友邀请,referral,裂变,1
+CH10,联盟推广,affiliate,广告,1
+CH11,线下扫码,offline,线下,1
+CH12,其他,other,其他,1

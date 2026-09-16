@@ -1,0 +1,13 @@
+__pycache__/
+*.py[cod]
+*.log
+.venv/
+.python311/
+.node/
+.downloads/
+backend/data/*.db
+backend/data/schema_index.json
+backend/.env
+frontend/node_modules/
+frontend/dist/
+frontend/.env
