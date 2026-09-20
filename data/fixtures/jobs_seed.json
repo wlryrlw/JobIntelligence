@@ -1,0 +1,19 @@
+{
+  "keyword": "AI Agent",
+  "city": "上海",
+  "scraped_at": "2026-09-01T12:00:00+08:00",
+  "scraper_version": "synthetic-fixture-v1",
+  "status": "succeeded",
+  "jobs": [
+    {"job_id": "synthetic-001", "title": "Agent开发工程师（合成）", "salary": "25-40K·13薪", "salary_source": "fixture", "location": "上海·徐汇区", "tags": "1-3年 | 本科 | Python", "skills": "Python3 | LangGraph | RAG", "welfare": "五险一金 | 带薪年假"},
+    {"job_id": "synthetic-002", "title": "LLM应用实习生（合成）", "salary": "300-500元/天", "salary_source": "fixture", "location": "上海·浦东新区", "tags": ["在校/应届", "硕士"], "skills": ["python", "FastAPI"]},
+    {"job_id": "synthetic-003", "title": "AI平台工程师（合成）", "salary": "年薪 30-50 万", "salary_source": "fixture", "location": "北京·海淀区", "tags": "3-5年 | 硕士", "skills": "Docker | k8s"},
+    {"job_id": "synthetic-004", "title": "算法研究员（合成）", "salary": "薪资面议", "salary_source": "fixture", "location": "杭州", "tags": "应届生 | 博士", "skills": "PyTorch"},
+    {"job_id": "synthetic-005", "title": "技术顾问（合成）", "salary": "底薪 + 提成", "salary_source": "fixture", "location": "深圳", "tags": "经验不限 | 学历不限", "skills": "LLM"},
+    {"job_id": "synthetic-006", "title": "后端工程师（合成）", "salary": "1-2万/月", "salary_source": "fixture", "location": "成都", "tags": "1-3年 | 本科", "skills": "Python | SQL"}
+  ],
+  "details": [
+    {"job_id": "synthetic-001", "company": "合成示例公司甲", "jd": "本条为人工编写的合成示例：使用 Python、LangGraph 和 RAG 构建可测试的 Agent。", "skill_tags": ["Python", "LangGraph", "检索增强生成"]},
+    {"job_id": "synthetic-002", "company": "合成示例公司乙", "jd": "本条为合成示例：使用 Python 和 FastAPI 编写异步接口。", "skill_tags": "Python3 | FastAPI"}
+  ]
+}

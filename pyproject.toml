@@ -1,0 +1,55 @@
+[project]
+name = "offeragent"
+version = "0.1.0"
+description = "OfferAgent：基于 Multi-Agent 与 NL2SQL 的智能求职决策系统"
+readme = "README.md"
+requires-python = ">=3.11,<3.12"
+dependencies = [
+    # Backend
+    "duckdb==1.5.5",
+    "fastapi==0.116.1",
+    "langgraph==1.2.11",
+    "mcp>=2.0,<3.0",
+    "pypdf>=5,<7",
+    "pydantic>=2.0,<3.0",
+    "python-multipart>=0.0.9,<1",
+    "sse-starlette==3.0.3",
+    "sqlglot==30.17.0",
+    "starlette>=0.40,<0.48",
+    "uvicorn[standard]==0.35.0",
+
+    # integrations/boss_zhipin
+    "requests>=2.28.0,<3.0.0",
+    "websocket-client>=1.6.0,<2.0.0",
+]
+
+[dependency-groups]
+dev = [
+    # FastAPI TestClient 使用 httpx
+    "httpx>=0.28,<1",
+
+    # 统一测试入口，并支持后续阶段的异步/SSE 测试
+    "pytest>=8,<9",
+    "pytest-asyncio>=0.24,<2",
+]
+
+[tool.uv]
+# 这是一个应用运行环境，不把 backend/ 和 integrations/ 当作
+# 一个需要构建和安装的 Python wheel。
+package = false
+default-groups = ["dev"]
+
+[tool.pytest.ini_options]
+testpaths = [
+    "backend/tests",
+    "integrations/boss_zhipin/tests",
+]
+pythonpath = [
+    "backend",
+    "integrations/boss_zhipin",
+]
+
+[tool.offeragent.integrations.boss_zhipin]
+# BOSS 集成自身的版本，供集成测试和文档版本守卫读取；不等同于
+# OfferAgent 项目整体版本。
+version = "2.2.0"

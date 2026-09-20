@@ -1,0 +1,58 @@
+# Python bytecode and caches
+**/__pycache__/
+**/*.py[cod]
+**/*$py.class
+
+# Virtual environments and local environment files
+**/.venv/
+**/venv/
+**/env/
+**/ENV/
+**/.env
+.python311/
+.node/
+.downloads/
+
+# Frontend and Python build artifacts
+**/node_modules/
+**/dist/
+**/build/
+**/*.egg-info/
+**/.eggs/
+**/*.egg
+**/tsconfig.tsbuildinfo
+
+# Test and tool caches
+**/.coverage
+**/.coverage.*
+**/htmlcov/
+**/.pytest_cache/
+**/.hypothesis/
+**/.mypy_cache/
+**/.ruff_cache/
+**/.tox/
+**/.nox/
+
+# Local data, generated databases, logs, and scraper output
+**/*.db
+**/*.log
+backend/data/schema_index.json
+data/local/
+backend/data/local/
+**/job-result/
+
+# Editor and operating-system files
+.idea/
+.vscode/
+**/.DS_Store
+**/._*
+**/Thumbs.db
+
+# Local skill tooling configuration
+.baoyu-skills/
+
+# AGENTS.md is part of the project documentation
+!AGENTS.md
+
+# ETL output contains local job descriptions and evidence
+data/databases/
