@@ -7,6 +7,7 @@ from langgraph.types import Command
 
 from ..config import settings
 from ..database import SCHEMA
+from ..contracts import TargetJobRequest
 from ..errors import PipelineStageError
 from ..model_client import ModelClient
 from ..models import QueryResult
@@ -44,6 +45,9 @@ class AskDataService:
         session_id: str,
         workspace: dict[str, Any] | None = None,
         user_id: str | None = None,
+        *,
+        resume_id: str | None = None,
+        target: TargetJobRequest | None = None,
     ) -> QueryResult:
         normalized = query.strip()
         access_scope = self.access_controller.resolve(user_id)
@@ -75,6 +79,8 @@ class AskDataService:
                     scoped_session_id,
                     resolved_workspace,
                     access_scope.public(),
+                    resume_id=resume_id,
+                    target=target,
                 ),
                 task_id,
             )
@@ -270,6 +276,9 @@ class AskDataService:
         session_id: str,
         workspace: dict[str, Any],
         access_scope: dict[str, Any] | None = None,
+        *,
+        resume_id: str | None = None,
+        target: TargetJobRequest | None = None,
     ) -> dict[str, Any]:
         analysis_context, analysis_sources = self.context.analysis_context(session_id, workspace)
         return {
@@ -277,6 +286,8 @@ class AskDataService:
             "query": query,
             "session_id": session_id,
             "workspace": self.context.query_workspace(workspace),
+            "resume_id": resume_id,
+            "target": target.model_dump(mode="json") if target else None,
             "access_scope": access_scope or self.access_controller.resolve(None).public(),
             "route_context": self.context.route_context(session_id, workspace),
             "short_term_context": self.context.short_term_context(session_id),

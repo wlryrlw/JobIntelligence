@@ -4,7 +4,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from .contracts import CareerReport
+from .contracts import CareerReport, TargetJobRequest
 
 
 class ConfirmedField(BaseModel):
@@ -33,6 +33,9 @@ class QueryRequest(BaseModel):
     query: str = Field(min_length=1, max_length=500)
     session_id: str = "demo-session"
     workspace: WorkspaceConfig | None = None
+    # 求职分析的显式上下文。不能要求模型从自然语言中猜测随机 resume_id。
+    resume_id: str | None = Field(default=None, min_length=8, max_length=200)
+    target: TargetJobRequest | None = None
 
 
 class ClarificationRequest(BaseModel):

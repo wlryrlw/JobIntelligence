@@ -186,7 +186,14 @@ def query(
     user: AuthUser = Depends(require_user),
 ) -> QueryResult:
     workspace = payload.workspace.model_dump(exclude_none=True) if payload.workspace else None
-    return service.submit(payload.query, payload.session_id, workspace, user.user_id)
+    return service.submit(
+        payload.query,
+        payload.session_id,
+        workspace,
+        user.user_id,
+        resume_id=payload.resume_id,
+        target=payload.target,
+    )
 
 
 @router.post("/tasks", response_model=TaskSnapshot, status_code=202)

@@ -45,6 +45,7 @@ testpaths = [
     "integrations/boss_zhipin/tests",
 ]
 pythonpath = [
+    ".",
     "backend",
     "integrations/boss_zhipin",
 ]

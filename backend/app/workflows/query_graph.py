@@ -187,6 +187,9 @@ class QueryWorkflow:
                 "action": decision.action,
                 "reason": decision.reason,
             })
+        explicit_target = state.get("target")
+        parsed_target = decision.target.model_dump(mode="json") if decision.target else None
+        explicit_resume_id = state.get("resume_id")
         return {
             "intent": {
                 "action": decision.action,
@@ -198,8 +201,8 @@ class QueryWorkflow:
             "direct_response": decision.response,
             "standalone_query": decision.standalone_query,
             "rewritten": decision.rewritten,
-            "target": decision.target.model_dump(mode="json") if decision.target else None,
-            "resume_id": decision.resume_id,
+            "target": explicit_target or parsed_target,
+            "resume_id": explicit_resume_id or decision.resume_id,
             "extraction": decision.retrieval.public(),
             "execution_log": execution_log,
         }

@@ -256,3 +256,21 @@ export interface LoginResponse {
   token_type: "bearer"
   user: AuthUser
 }
+
+export interface TaskEvent {
+  event_id: string
+  task_id: string
+  sequence: number
+  event_type: string
+  timestamp: string
+  payload: Record<string, string | number | boolean | null>
+}
+
+export interface TaskSnapshot {
+  task_id: string
+  status: "created" | "running" | "waiting_clarification" | "completed" | "failed" | "cancelled"
+  sequence: number
+  session_id: string
+  result?: { summary: string; steps: string[]; data: Record<string, unknown> } | null
+  error?: { code: string; message: string; detail?: string | null } | null
+}

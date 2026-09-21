@@ -548,39 +548,340 @@ run_id
 
 ### 阶段 2 · QueryAgent 与 SQL Self-Correction（4–5 天）
 
-- [ ] 移除 Schema 检索节点、`schema_store.json`、embedding/rerank 依赖与索引构建；以 `SchemaCatalog` 全量注入 prompt，并记录 token 规模
-- [ ] 保留 sqlglot 只读安全校验和表白名单，增加结构化 `error_kind / retryable / attempt`
-- [ ] 修改 fail-fast 守卫测试，实现 QueryAgent 的 SQL 生成 → 校验 → 执行 → 可修复错误回喂链路
-- [ ] 明确最多 3 次 SQL 执行（首次 + 2 次修复），辅助工具调用不占用 SQL 修复预算
-- [ ] Coordinator：新增 `career_advice` 路由、目标关键词/城市解析、任务状态和数据新鲜度检查
-- [ ] 增加 QueryAgent SSE 事件：Schema 加载、SQL 生成、校验、执行、修复、完成/失败
-- [ ] 图表工具扩展（line / 直方图）+ `ChartSpec` → ECharts 配置映射
+- [x] 岗位市场主链路移除 Schema RAG 依赖，以 `SchemaCatalog` 全量注入 prompt，并记录 token 规模；旧 AskData 检索路径为兼容回归保留
+- [x] 保留 sqlglot 只读安全校验和表白名单，增加结构化 `error_kind / retryable / attempt`
+- [x] 修改 fail-fast 守卫测试，实现 QueryAgent 的 SQL 生成 → 校验 → 执行 → 可修复错误回喂链路
+- [x] 明确最多 3 次 SQL 执行（首次 + 2 次修复），辅助工具调用不占用 SQL 修复预算
+- [x] Coordinator：新增 `career_advice` 路由、目标关键词/城市解析、任务状态和数据新鲜度检查
+- [x] 增加 QueryAgent 领域事件：Schema 加载、SQL 生成、校验、执行、修复、完成/失败，并汇入执行轨迹
+- [x] 图表工具扩展（line / 直方图）+ `ChartSpec` → ECharts 配置映射
+
+> 实现边界：岗位市场 QueryAgent 已不依赖旧 Schema RAG；旧 AskData 多数据库检索、Embedding/Rerank 配置仍为兼容路径。阶段 0 的可恢复 SSE 假任务与 QueryAgent 领域事件是两条接口路径，生产级异步任务队列仍属于后续工作。
 
 **阶段验收**：查询成功、可修复错误可恢复、权限和安全错误不被模型绕过、所有 SQL 尝试可回溯。
 
 ### 阶段 3 · CareerAgent 最小闭环（4–5 天）
 
-- [ ] 简历上传解析（文本 / 文本型 PDF）→ PII 脱敏 → 技能和项目证据结构化抽取
-- [ ] JD 技能抽取：先完成可复现 regex 基线，再接入严格 Pydantic LLM structured output
-- [ ] 设计技能 alias/canonical 归一化，记录类别、证据、置信度和 extractor version
-- [ ] 构建岗位画像：岗位级技能出现率、薪资分位、经验/学历分布和样本量提示
-- [ ] 覆盖 / 部分覆盖 / 缺口分析，输出 JD 证据 + 简历证据
-- [ ] 报告拼装：事实层模板化，LLM 只负责建议层语言组织；STAR 改写禁止虚构经历和指标
-- [ ] 暂不把 OCR、多格式文档、自动投递和复杂推荐加入 MVP
+- [x] 简历上传解析（文本 / 文本型 PDF）→ PII 脱敏 → 技能和项目证据结构化抽取
+- [x] JD 技能抽取：先完成可复现 regex 基线，再接入严格 Pydantic LLM structured output
+- [x] 设计技能 alias/canonical 归一化，记录类别、证据、置信度和 extractor version
+- [x] 构建岗位画像：岗位级技能出现率、薪资分位、经验/学历分布和样本量提示
+- [x] 覆盖 / 部分覆盖 / 缺口分析，输出 JD 证据 + 简历证据
+- [x] 报告拼装：事实层模板化，LLM 只负责建议层语言组织；STAR 改写禁止虚构经历和指标
+- [x] MVP 边界明确暂不把 OCR、多格式文档、自动投递和复杂推荐加入 MVP
 
 **阶段验收**：缺少简历或目标岗位参数时进入澄清；每一项覆盖结论都有证据；文本提取失败时明确失败，不生成伪分析。
 
 ### 阶段 4 · 评测、前端与演示（3–4 天 + 缓冲）
 
-- [ ] `seed / eval_dev / eval_test` 三路数据分离；准备至少 50 个 NL2SQL case 和脱敏/合成 fixture
-- [ ] pytest 风格 runner：首轮准确率、纠错后准确率、恢复率、尝试次数、P50/P95 延迟、token/cost
-- [ ] 消融实验：纠错开/关、few-shot 开/关；记录模型、数据集和配置版本
-- [ ] 拆分 782 行的 `App.vue`，接入 SSE 执行轨迹、Clarification、ECharts 与 Markdown 渲染
-- [ ] 采集 CLI/任务 API 的状态展示；管理页作为可选项
-- [ ] 种子数据一键启动（`make setup`）+ 演示录屏，**面试演示不依赖 live 爬取与登录**
-- [ ] GitHub README（含免责声明、数据来源、隐私说明和量化指标）+ 简历 Highlight Bullets
+- [x] `seed / eval_dev / eval_test` 三路数据分离；准备至少 50 个 NL2SQL case 和脱敏/合成 fixture
+- [x] pytest 风格 runner：首轮准确率、纠错后准确率、恢复率、尝试次数、P50/P95 延迟、token/cost
+- [x] 消融实验：纠错开/关、few-shot 开/关；记录模型、数据集和配置版本
+- [x] 拆分 782 行的 `App.vue`，接入 SSE 执行轨迹、Clarification、ECharts 与 Markdown 渲染
+- [x] 采集 CLI/任务 API 的状态展示；管理页作为可选项
+- [x] 种子数据一键启动（`make setup`）+ 演示录屏，**面试演示不依赖 live 爬取与登录**
+- [x] GitHub README（含免责声明、数据来源、隐私说明和量化指标）+ 简历 Highlight Bullets
 
 > 缓冲使用原则：如果时间不足，优先保留离线 seed、QueryAgent Self-Correction、CareerAgent 证据报告和评测 runner；可以延期管理页、前端评测页、ECharts 高级图表以及 LLM/regex 的完整对比实验。若 SSE 集成确实延期，则保留同一任务/事件模型，切换为 REST + 轮询，并在简历中如实描述。
+
+### 阶段 5 · 前端交互重构与 CareerAgent 用户入口
+
+> **状态：方案阶段，尚未执行。** 本阶段针对阶段 4 后暴露出的产品可用性问题进行收敛：移除“岗位字段”这一当前没有形成稳定后端语义的交互概念，保留并强化“岗位结果”作为后续分析上下文；补齐简历上传和简历证据分析的前端闭环；改善结果管理、可读性、对话布局和中文字段展示。除非另有说明，本阶段不改变岗位 ETL、DuckDB 只读安全边界和 CareerAgent 的事实计算逻辑。
+
+#### 5.1 目标、范围与设计原则
+
+本阶段必须完成以下目标：
+
+1. **删除“岗位字段”功能**：删除前端右侧“岗位字段”区域、拖拽字段交互、字段收藏和字段上下文；删除后端与用户确认字段、字段长期记忆、字段上下文注入直接相关的代码和 API。保留 QueryAgent 内部所需的 SchemaCatalog，不能将“删除用户字段选择”误做成“删除数据库字段元数据”。
+2. **补齐简历分析前端入口**：在右侧上下文面板增加“我的简历”区域，支持上传自己的简历、查看解析状态、选择目标岗位并启动分析；在可访问的弹窗中显示结构化 CareerReport，并支持下载可阅读的本地报告。
+3. **管理已保存的岗位结果**：右侧“可添加的岗位结果”中的每个结果增加删除操作。删除的是本地保存的结果记忆，不删除查询任务、原始岗位数据或 ETL 发布版本；如果该结果已加入当前上下文，删除后同时从当前上下文移除。
+4. **提升整体可读性和对话习惯**：统一扩大正文、表格、按钮、上下文面板和辅助说明的字号及行高；用户消息靠右显示，助手消息靠左显示，形成接近 ChatGPT 的消息布局；移动端保持可用。
+5. **统一查询结果列名为中文**：数据库和 SQL 内部继续使用稳定的英文列名，API 增加列名显示映射，前端表格、导出文件、保存结果摘要和上下文卡片统一显示 Schema 中的中文标签；找不到标签时才回退为原始列名。
+
+设计原则：
+
+- 一次性自然语言查询不依赖任何手动字段选择；用户只需提出问题即可查询。
+- “岗位结果”表示一组已经返回的岗位行，是后续对比和综合分析的上下文；“岗位字段”不再作为产品概念。
+- 简历分析必须明确选择简历和目标岗位，不能让模型猜测用户要使用哪份简历或哪个岗位样本。
+- 简历文件校验在浏览器和后端各执行一次；前端负责即时反馈，后端负责最终安全边界。
+- 报告事实、证据和建议分层展示；下载内容不能包含未脱敏的简历原文。
+- 保持 SQL 原始列名、图表字段引用和权限校验稳定，中文化只改变展示层和导出层。
+
+#### 5.2 删除“岗位字段”的实现方案
+
+##### 5.2.1 前端删除范围
+
+从 frontend/src/App.vue、frontend/src/types.ts、frontend/src/api.ts 和 frontend/src/style.css 中删除以下内容：
+
+- “岗位字段”上下文区域及其空状态、数量统计、来源说明和拖拽目标；
+- confirmedFields、recentFields、fieldLibrary、fieldSourceMap、addConfirmedField、dropConfirmedField、removeConfirmedField、字段收藏等状态和函数；
+- ConfirmedField、schema_fields、兼容字段 fields、kind 为 schema_field 以及字段专用 API 类型；
+- 字段拖拽、高亮、字段徽标、字段保存按钮和仅服务于字段区的 CSS；
+- 前端为字段列表专门调用 /api/schema 的逻辑。如果后续仍需要 Schema 展示，应由独立的只读诊断页使用，不重新引入上下文字段选择。
+
+右侧面板重构为三个区域：
+
+1. **我的简历**：上传、状态、删除和开始分析；
+2. **已加入的岗位结果**：当前下一条综合分析会使用的结果集；
+3. **可添加的岗位结果**：已保存但尚未加入当前上下文的结果集。
+
+现有 analysis_table_ids 和 analysis_tables 保留并作为岗位结果上下文的唯一前端契约。旧会话中仍存在 schema_fields 或 fields 时，前端加载时直接丢弃，不显示迁移残留。
+
+##### 5.2.2 后端删除范围
+
+从用户上下文和记忆功能中删除字段专用逻辑：
+
+- backend/app/models.py 删除 ConfirmedField、WorkspaceConfig.schema_fields 和兼容字段 WorkspaceConfig.fields；WorkspaceConfig.analysis_table_ids、analysis_tables 保留；
+- backend/app/models.py 删除 SaveFieldMemoryRequest；
+- backend/app/services/memory_store.py 删除 save_field()；保留结果记忆的保存、列表和删除；
+- backend/app/services/askdata_service.py 删除 save_field_memory()；
+- backend/app/api/routes.py 删除 POST /api/memories/fields；GET /api/memories、POST /api/memories 和 DELETE /api/memories/{memory_id} 保留；
+- backend/app/services/session_context.py 删除 schema_fields 的归一化、查询上下文输出和字段注入；保留岗位结果上下文以及仍被旧 AskData 路径使用的必要表级/参数级兼容逻辑；
+- backend/app/retrieval/service.py 删除 include_workspace() 中 confirmed_fields、user_confirmed 字段注入分支。若旧路径仍需要确认数据表，拆出只处理表级选择的最小函数，不保留字段级语义；
+- backend/app/workflows/query_graph.py 和 backend/app/querying/single_database_agent.py 删除 confirmed_fields 的传递和 Prompt 字段；岗位市场 QueryAgent 继续使用完整 SchemaCatalog；
+- 清理 saved_memories.json 中历史 kind == "schema_field" 记录。迁移应只删除字段记忆，保留 result_table；旧 workspace 中的字段属性加载后忽略，不影响历史查询结果。
+
+不删除以下内容：
+
+- jobs_market 的 _schema.json、SchemaCatalog、字段中文标签和 SQL 校验所需的实际 Schema；
+- QueryAgent 内部识别字段和生成 SQL 的能力；
+- 岗位结果记忆和分析上下文；
+- CareerAgent 对岗位画像所需的岗位字段读取。
+
+##### 5.2.3 删除后的契约验收
+
+- 新的 /api/query 请求中不再要求 schema_fields 或 fields；
+- 含有旧字段属性的请求仍能被安全接收并忽略，避免历史浏览器状态导致 422；完成过渡后再移除兼容代码；
+- 查询结果不依赖右侧任何手动选择；清空右侧面板不会改变普通自然语言查询结果；
+- 后端代码、前端类型和测试中不再出现用户字段保存、字段拖拽和字段上下文注入的残留引用。
+
+#### 5.3 简历上传与 CareerAgent 前端闭环
+
+##### 5.3.1 上传入口和文件要求
+
+右侧“我的简历”卡片提供“上传简历”按钮和隐藏的 input type=file。上传前在前端明确展示以下要求：
+
+- 支持 .txt、.text、.md、.markdown 和可提取文字的 .pdf；
+- 默认最大 5 MB；
+- PDF 默认最多 10 页；
+- 文本文件必须是 UTF-8；
+- 扫描版 PDF、图片型 PDF 暂不支持 OCR；
+- 文件至少要能提取出 10 个字符；
+- 简历属于敏感个人数据，默认保存在本地；进入分析前会执行邮箱、手机号、地址等确定性 PII 脱敏；
+- 不支持 DOC/DOCX，界面需要明确写出“当前不支持”，不能让用户上传后才得到含糊错误。
+
+前端先检查扩展名和文件大小，再调用已有 POST /api/resumes。由于上传使用 multipart/form-data，需要重构前端 request()：当 body 是 FormData 时不手动设置 Content-Type，让浏览器自动生成 boundary；JSON 请求继续使用 application/json。
+
+后端已有的限制仍是最终权威，上传失败必须将 API 返回的 detail 转换为用户可读提示，例如：
+
+| 失败情况 | 前端提示方向 |
+|---|---|
+| 扩展名不支持 | “请上传 TXT、Markdown 或可复制文本的 PDF，当前不支持 DOCX 和扫描版 PDF。” |
+| 文件过大 | “文件超过 5 MB，请压缩或导出较小的简历。” |
+| PDF 页数过多 | “PDF 超过 10 页，请上传精简版简历。” |
+| 无法提取文字 | “未提取到足够文本，扫描版 PDF 暂不支持 OCR。” |
+| 网络或后端错误 | 显示服务端错误摘要，并保留已选文件以便重试 |
+
+上传过程需要有 idle / validating / uploading / ready / failed 状态。成功后只在前端状态和会话存储中保存 resume_id、文件名、页数、技能数、项目数和脱敏计数，不把原始简历文本放进会话、聊天消息或前端日志。
+
+##### 5.3.2 分析入口和参数
+
+上传成功后在“我的简历”卡片中显示“分析简历”按钮。点击后打开一个 role="dialog" 的分析弹窗，包含：
+
+- 当前已选择的简历及解析状态；
+- 目标岗位关键词（必填）；
+- 城市（必填）；
+- 经验要求（可选）；
+- 学历要求（可选）；
+- “开始分析”按钮。
+
+前端调用已有 POST /api/query，扩展 api.query() 参数以发送：
+
+~~~json
+{
+  "query": "请基于我的简历分析目标岗位的技能覆盖、技能差距和求职建议",
+  "session_id": "career-<conversation-id>",
+  "resume_id": "<uploaded-resume-id>",
+  "target": {
+    "keyword": "AI Agent",
+    "city": "上海",
+    "experience": "3-5年",
+    "degree": "本科"
+  }
+}
+~~~
+
+关键词和城市必须显式传给后端；不能只依赖模型从弹窗文案中猜测目标岗位。分析前端需要展示 idle / analyzing / completed / failed 状态。缺少简历、目标岗位或岗位数据不新鲜时，显示 Coordinator 返回的澄清或资源错误，不生成占位报告。
+
+##### 5.3.3 报告弹窗和本地保存
+
+新增 CareerReportDialog.vue，不把简历分析结果挤入普通岗位表格。弹窗包含以下可折叠区域：
+
+1. 报告标题、目标岗位、数据集版本、岗位样本数和有效 JD 数；
+2. 岗位画像：技能出现率、薪资 P25/P50/P75、经验分布、学历分布；
+3. 技能覆盖表：技能、要求级别、覆盖状态、岗位 JD 证据、简历证据、建议；
+4. 简历改写方向；
+5. 面试准备清单；
+6. 样本量警告和证据边界；
+7. “下载 Markdown”按钮和“关闭”按钮。
+
+本地保存采用浏览器 Blob 下载生成 UTF-8 Markdown 文件，文件名包含岗位关键词和日期，例如：
+
+~~~text
+OfferAgent-AI-Agent-上海-求职分析-20260921.md
+~~~
+
+Markdown 内容按上述顺序组织，使用标题、表格、列表和引用块保证脱离网页后仍然可读。下载内容只包含已脱敏的结构化证据和报告结论，不写入原始简历全文、邮箱、手机号、身份证号或完整 JD。必要时可额外提供浏览器打印入口，但不把 PDF 生成作为本阶段前置依赖。
+
+前端类型补充 ResumeUploadResponse、TargetJobRequest、CareerReport、JobProfile 和 SkillCoverageItem，并在 QueryResult 中声明 career_report，避免目前“后端返回了报告、前端类型却没有报告字段”的不一致。
+
+#### 5.4 岗位结果保存、加入上下文与删除
+
+##### 5.4.1 交互语义
+
+右侧区域统一使用以下文案：
+
+- **已加入的岗位结果**：会作为下一条综合分析的参考结果；
+- **可添加的岗位结果**：已保存但尚未加入本次上下文的结果；
+- **添加到分析上下文**：将该结果集加入当前对话；
+- **从上下文移除**：只取消本次对话引用，不删除保存记录；
+- **删除保存结果**：从本地保存列表删除，不影响原始数据库和历史聊天气泡。
+
+不再使用“岗位字段”统计。上下文摘要改为：
+
+~~~text
+本次分析将使用 N 个岗位结果
+~~~
+
+##### 5.4.2 删除操作
+
+每个“可添加的岗位结果”卡片增加“删除”按钮。点击后显示轻量确认提示，明确说明：
+
+> 删除后只移除这条已保存的查询结果，不会删除岗位数据库，也不会删除聊天记录。
+
+确认后调用现有 DELETE /api/memories/{memory_id}，其中结果记忆 ID 为 result:<task_id>。成功后：
+
+1. 刷新 savedMemories；
+2. 从 analysis_table_ids 移除相同任务 ID；
+3. 更新当前会话的 workspace；
+4. 显示短暂成功反馈；
+5. 失败时保留卡片并显示服务端错误，不做静默删除。
+
+后端继续复用现有用户隔离和所有权检查。删除接口需要补充测试，确保用户不能删除其他用户的结果记忆，且删除结果记忆不会删除 SessionContext.tasks 中的查询任务。
+
+#### 5.5 UI 可读性和对话布局
+
+##### 5.5.1 字体和尺寸
+
+将 frontend/src/style.css 中散落的极小字号收敛为少量 CSS 变量，例如：
+
+~~~css
+:root {
+  --font-body: 14px;
+  --font-small: 12px;
+  --font-caption: 11px;
+  --line-body: 1.7;
+}
+~~~
+
+调整原则：
+
+- 普通对话正文不低于 14px；
+- 用户问题和助手正文使用 14–15px，行高不低于 1.6；
+- 表格正文不低于 12px，表头不低于 11px；
+- 右侧面板标题不低于 15px，说明文字不低于 12px；
+- 按钮文字不低于 12px，状态提示不低于 11px；
+- 保持字号与窗口宽度的响应式下限，不能通过整体 transform: scale() 放大；
+- 导出、打印样式单独维护，不受网页缩放规则破坏。
+
+##### 5.5.2 ChatGPT 风格消息布局
+
+调整消息结构和 CSS：
+
+- 用户消息行使用 justify-content: flex-end，用户气泡靠右，最大宽度约为内容区的 70–80%；
+- 助手消息行靠左，结果表格、报告和执行轨迹保持左对齐并占据可用宽度；
+- 用户头像可放在气泡右侧或隐藏，助手头像保留在左侧，避免消息归属不清；
+- 用户气泡和助手内容使用不同背景、边框和圆角，但保持当前绿色视觉体系；
+- 加载状态归入助手消息；失败提示仍在当前对话流中显示；
+- 小屏幕下用户气泡最大宽度降至 88%，右侧上下文面板继续采用抽屉。
+
+完成后进行桌面宽屏、窄屏和移动宽度的人工视觉验收，重点检查长问题、宽表格、报告弹窗和错误提示是否溢出。
+
+#### 5.6 查询结果中文列名
+
+##### 5.6.1 数据契约
+
+保留 columns 作为内部稳定的 SQL 原始列名，新增展示映射：
+
+~~~python
+column_labels: dict[str, str]
+~~~
+
+例如：
+
+~~~json
+{
+  "columns": ["job_id", "title", "company", "salary_min_k"],
+  "column_labels": {
+    "job_id": "岗位编号",
+    "title": "岗位名称",
+    "company": "公司名称",
+    "salary_min_k": "月薪下限K"
+  }
+}
+~~~
+
+rows 仍以英文列名作为 key，避免 SQL、图表和分析代码失效。前端表格和导出逻辑通过 column_labels[rawName] 展示中文；映射缺失时回退原始名称，并在开发日志中记录未映射字段。
+
+##### 5.6.2 生成和展示位置
+
+- 在后端增加集中式 ColumnLabelResolver，优先从当前数据库的 SchemaCatalog 读取 label，其次使用已声明的别名映射，最后回退原始列名；
+- 在 QueryAgent 结果、旧单库 Agent 结果和 DataQA/报告结果构造处统一填充 column_labels，不能只修复某一条查询路径；
+- MemoryStore.save_result() 同时保存 column_labels，历史结果缺少映射时由后端读取时补齐；
+- 前端 ResultTableCard 接收原始列名和标签映射，表头显示中文；Excel/CSV 导出表头显示中文，但取值仍从原始 key 读取；
+- SQL 展开区域继续显示英文 SQL，必要时在 SQL 区域旁说明“SQL 使用内部字段名，结果表使用中文列名”；
+- 图表 category_field、value_field 继续使用原始字段名，图表标题、坐标轴和图例使用中文标签。
+
+##### 5.6.3 列名验收
+
+至少验证以下岗位字段：
+
+~~~text
+job_id            → 岗位编号
+title             → 岗位名称
+company           → 公司名称
+city              → 城市
+salary_raw        → 原始薪资
+salary_min_k      → 月薪下限K
+salary_max_k      → 月薪上限K
+experience        → 经验要求
+degree            → 学历要求
+skills            → 规范技能
+welfare           → 福利
+~~~
+
+聚合列必须使用 SQL 中的中文别名或确定性中文标签，例如 平均月薪下限、岗位数量，不能显示为 avg(salary_min_k) 或 count 等难以阅读的原始表达式。
+
+#### 5.7 实施顺序与验证
+
+按以下顺序执行，减少前后端互相等待：
+
+1. **契约清理**：删除岗位字段相关模型、API、Workspace 字段和记忆类型；加入旧 payload 兼容读取与迁移测试。
+2. **岗位结果删除**：接通删除按钮、确认反馈、上下文同步和用户所有权测试。
+3. **中文列名**：增加 column_labels，统一后端结果构造和前端表格/导出展示。
+4. **简历 API 前端接入**：增加上传 API、前端预校验、状态机和错误展示。
+5. **简历分析弹窗**：接入 resume_id + target，渲染 CareerReport，并实现 Markdown 本地下载。
+6. **整体 UI 调整**：扩大字号，右对齐用户消息，优化右侧面板和弹窗响应式样式。
+7. **回归和视觉验收**：执行后端测试、前端类型检查、生产构建，并使用真实的文本简历、文本型 PDF、非法文件和空结果进行手工验收。
+
+最低测试集合：
+
+- 后端：旧 workspace 中含 schema_fields 时可查询且不再进入字段注入；字段记忆 API 不存在；结果记忆可保存、删除和所有权隔离；上传 TXT/Markdown/PDF 成功；不支持格式、超大文件、空文本和扫描 PDF 明确失败；CareerReport 缺少简历或目标岗位时不生成伪报告；所有结果路径都有 column_labels；
+- 前端：上传前校验、上传失败重试、分析缺参提示、分析失败提示、报告弹窗关闭/再次打开、Markdown 下载、岗位结果删除和上下文同步；
+- 视觉：桌面端和移动端字号可读；用户消息靠右、助手消息靠左；宽表格横向滚动；中文列名、导出文件和报告弹窗一致；
+- 构建：uv run pytest、前端 vue-tsc --noEmit 和生产构建全部通过；git diff --check 无空白错误。
+
+**阶段 5 验收标准**：用户无需添加任何岗位字段即可完成岗位查询；能够在右侧上传符合要求的简历并看到明确成功/失败状态；能够选择目标岗位并在弹窗中阅读技能覆盖报告、岗位画像和求职建议；能够将报告下载为可读 Markdown；能够删除任意已保存岗位结果且不影响原始数据和聊天记录；对话布局和字号在桌面及移动端可读；查询结果表、保存结果和导出文件中的岗位字段均以中文展示。
 
 ### MVP 与 Stretch 边界
 

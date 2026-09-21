@@ -3,6 +3,9 @@ import { computed, nextTick, onMounted, ref } from "vue"
 import { api } from "./api"
 import ReportCard from "./components/ReportCard.vue"
 import ResultTableCard from "./components/ResultTableCard.vue"
+import ClarificationPanel from "./components/ClarificationPanel.vue"
+import DemoTaskPanel from "./components/DemoTaskPanel.vue"
+import ExecutionTimeline from "./components/ExecutionTimeline.vue"
 import type { AuthUser, QueryResult, ReportDataSource, SavedMemory, SchemaField, SchemaTable, WorkspaceConfig } from "./types"
 
 interface ConversationTurn {
@@ -29,7 +32,8 @@ interface HistoricalResultTable {
 
 const SAVED_TABLE_LIMIT = 8
 const FIELD_LIBRARY_LIMIT = 12
-const prompts = ["查询本月各地区销售额", "按客户等级统计本月销售额", "对比本月各地区销售额和销售目标"]
+const prompts = ["上海 AI Agent 岗位最常见的技能有哪些？", "统计杭州 Python 后端岗位的薪资分布", "对比北京和上海的 AI 岗位要求"]
+type SubmitShortcut = "enter" | "metaEnter"
 const input = ref("")
 const loading = ref(false)
 const pendingQuery = ref("")
@@ -48,6 +52,11 @@ const authReady = ref(false)
 const loginLoading = ref(false)
 const loginUsername = ref("admin")
 const loginPassword = ref("admin123")
+const submitShortcut = ref<SubmitShortcut>("enter")
+type ContextDropTarget = "field" | "result" | null
+const librarySection = ref<HTMLElement | null>(null)
+const dragTarget = ref<ContextDropTarget>(null)
+const composing = ref(false)
 
 const activeConversation = computed(() =>
   conversations.value.find((item) => item.id === activeConversationId.value),
@@ -98,13 +107,15 @@ const selectedAnalysisTables = computed(() =>
 const recentFields = computed(() => {
   const items: { field: SchemaField; tableId: string }[] = []
   const keys = new Set<string>()
-  const add = (fieldName: string, tableId: string) => {
-    const table = schema.value.find((item) => item.id === tableId)
+  const add = (fieldName: string, tableId?: string) => {
+    const table = (tableId ? schema.value.find((item) => item.id === tableId) : undefined)
+      ?? schema.value.find((item) => item.fields.some((field) => field.name === fieldName))
     const field = table?.fields.find((item) => item.name === fieldName)
-    const key = `${tableId}:${fieldName}`
-    if (field && !keys.has(key)) {
+    const resolvedTableId = table?.id
+    const key = `${resolvedTableId}:${fieldName}`
+    if (field && resolvedTableId && !keys.has(key)) {
       keys.add(key)
-      items.push({ field, tableId })
+      items.push({ field, tableId: resolvedTableId })
     }
   }
   for (const conversation of conversations.value) {
@@ -112,12 +123,19 @@ const recentFields = computed(() => {
       for (const field of turn.result.schema_graph?.fields ?? []) {
         if (field.source !== "relation_key") add(field.name, field.table_id)
       }
+      for (const column of turn.result.columns) {
+        add(column)
+      }
     }
     for (const field of conversation.workspace.schema_fields ?? conversation.workspace.fields ?? []) {
       const tableId = field.tableId
       if (tableId) add(field.name, tableId)
     }
   }
+  for (const table of historicalResultTables.value) {
+    for (const column of table.columns) add(column)
+  }
+
   return items.slice(0, FIELD_LIBRARY_LIMIT)
 })
 const savedFieldKeys = computed(() => new Set(
@@ -148,6 +166,34 @@ const fieldLibrary = computed(() => {
   }
   return items.slice(0, FIELD_LIBRARY_LIMIT)
 })
+const fieldSourceMap = computed(() => {
+  const sources = new Map<string, string>()
+  const addResultColumnSource = (column: string, source: string) => {
+    const table = schema.value.find((item) => item.fields.some((field) => field.name === column))
+    if (table) sources.set(`${table.id}:${column}`, source)
+  }
+  for (const conversation of conversations.value) {
+    for (const turn of conversation.turns) {
+      for (const field of turn.result.schema_graph?.fields ?? []) {
+        if (field.source === "relation_key") continue
+        sources.set(`${field.table_id}:${field.name}`, turn.query)
+      }
+      for (const column of turn.result.columns) {
+        addResultColumnSource(column, turn.query)
+      }
+    }
+  }
+  for (const table of historicalResultTables.value) {
+    for (const column of table.columns) addResultColumnSource(column, table.query)
+  }
+  return sources
+})
+const contextSummary = computed(() => {
+  const fieldCount = confirmedFields.value.length
+  const resultCount = selectedAnalysisTables.value.length
+  if (!fieldCount && !resultCount) return "暂未添加岗位字段或岗位结果"
+  return `本次查询将使用 ${fieldCount} 个岗位字段 · ${resultCount} 个岗位结果`
+})
 const historyGroups = computed(() => {
   const today = new Date().toDateString()
   const recent: ConversationRecord[] = []
@@ -162,10 +208,10 @@ const historyGroups = computed(() => {
   ].filter((group) => group.items.length)
 })
 const userRoleLabel = computed(() => {
-  if (authUser.value?.role === "local") return "本地岗位数据"
-  if (authUser.value?.role === "admin") return "全部数据权限"
-  if (authUser.value?.role === "analyst") return "仅 Mock 数据"
-  return "电商运营数据"
+  if (authUser.value?.role === "local") return "本地岗位市场"
+  if (authUser.value?.role === "admin") return "岗位市场管理员"
+  if (authUser.value?.role === "analyst") return "演示岗位数据"
+  return "岗位研究工作区"
 })
 
 onMounted(async () => {
@@ -367,8 +413,30 @@ function resetWorkspace() {
   workspace.value = {}
   saveActiveConversation()
 }
+function isConfirmedField(fieldName: string, tableId?: string) {
+  return Boolean(tableId && confirmedFields.value.some(
+    (field) => field.name === fieldName && field.tableId === tableId,
+  ))
+}
+
+function fieldSource(fieldName: string, tableId?: string) {
+  return fieldSourceMap.value.get(`${tableId}:${fieldName}`) ?? `数据表：${tableLabel(tableId)}`
+}
+
+function scrollToLibrary() {
+  librarySection.value?.scrollIntoView({ behavior: "smooth", block: "start" })
+}
+function setDragTarget(target: ContextDropTarget) {
+  dragTarget.value = target
+}
+
+function clearDragTarget() {
+  dragTarget.value = null
+}
+
 
 function dragAnalysisTable(event: DragEvent, table: HistoricalResultTable) {
+  setDragTarget("result")
   event.dataTransfer?.setData("analysis-result-table", table.taskId)
   if (event.dataTransfer) event.dataTransfer.effectAllowed = "copy"
 }
@@ -380,6 +448,7 @@ function addAnalysisTable(taskId: string) {
 }
 
 function dropAnalysisTable(event: DragEvent) {
+  clearDragTarget()
   addAnalysisTable(event.dataTransfer?.getData("analysis-result-table") ?? "")
 }
 
@@ -389,6 +458,7 @@ function removeAnalysisTable(taskId: string) {
 }
 
 function dragField(event: DragEvent, field: SchemaField, tableId: string) {
+  setDragTarget("field")
   event.dataTransfer?.setData("field", field.name)
   event.dataTransfer?.setData("field-table", tableId)
   if (event.dataTransfer) event.dataTransfer.effectAllowed = "copy"
@@ -421,6 +491,7 @@ function addConfirmedField(fieldName: string, sourceTableId?: string) {
 }
 
 function dropConfirmedField(event: DragEvent) {
+  clearDragTarget()
   addConfirmedField(
     event.dataTransfer?.getData("field") ?? "",
     event.dataTransfer?.getData("field-table") ?? undefined,
@@ -446,25 +517,42 @@ function clarificationHint(result: QueryResult) {
   return result.clarification?.options.map((option) => option.label).join("、") ?? ""
 }
 
+function handleComposerKeydown(event: KeyboardEvent) {
+  if (event.key !== "Enter" || event.isComposing || composing.value) return
+  const commandEnter = (event.metaKey || event.ctrlKey) && !event.shiftKey && !event.altKey
+  const plainEnter = !event.metaKey && !event.ctrlKey && !event.shiftKey && !event.altKey
+  const shouldSubmit = submitShortcut.value === "enter" ? plainEnter : commandEnter
+  if (!shouldSubmit) return
+  event.preventDefault()
+  void submit()
+}
+
+function startComposition() {
+  composing.value = true
+}
+
+function endComposition() {
+  composing.value = false
+}
 </script>
 
 <template>
-  <div v-if="!authReady" class="auth-loading"><span></span><p>正在连接 AskData…</p></div>
+  <div v-if="!authReady" class="auth-loading"><span></span><p>正在连接 OfferAgent…</p></div>
 
   <main v-else-if="!authUser" class="login-page">
     <section class="login-intro">
-      <div class="login-brand"><span>A</span><strong>AskData</strong></div>
+      <div class="login-brand"><span>O</span><strong>OfferAgent</strong></div>
       <div>
-        <p class="kicker">AI DATA ASSISTANT</p>
-        <h1>用自然语言，<br>读懂你的数据。</h1>
-        <p>字段级 Schema 检索、权限隔离和可保存的数据记忆，都从一个问题开始。</p>
+        <p class="kicker">AI CAREER DECISION ASSISTANT</p>
+        <h1>让岗位数据，<br>服务于你的下一步。</h1>
+        <p>连接岗位市场与个人简历，分析技能差距、薪资口径和面试准备方向。</p>
       </div>
-      <small>FastAPI · LangGraph · MCP</small>
+      <small>ETL · QueryAgent · CareerAgent</small>
     </section>
 
     <section class="login-side">
       <form class="login-card" @submit.prevent="loginUser">
-        <header><span class="login-mark">A</span><div><h2>欢迎回来</h2><p>登录 AskData Studio</p></div></header>
+        <header><span class="login-mark">O</span><div><h2>欢迎回来</h2><p>登录 OfferAgent</p></div></header>
         <label>
           <span>账号</span>
           <input v-model="loginUsername" autocomplete="username" placeholder="请输入账号">
@@ -487,16 +575,16 @@ function clarificationHint(result: QueryResult) {
           </button>
           <button type="button" @click="useMockAccount('sales', 'sales123')">
             <span class="account-icon user">销</span>
-            <span><strong>sales</strong><small>电商运营 · ecommerce_ops</small></span>
+            <span><strong>sales</strong><small>岗位研究 · jobs_market</small></span>
             <code>sales123</code>
           </button>
           <button type="button" @click="useMockAccount('mock', 'mock123')">
             <span class="account-icon mock">示</span>
-            <span><strong>mock</strong><small>基础演示 · askdata_mock</small></span>
+            <span><strong>mock</strong><small>演示岗位数据 · jobs_market</small></span>
             <code>mock123</code>
           </button>
         </div>
-        <small class="login-note">Mock 登录仅用于本地学习，不适合生产环境。</small>
+        <small class="login-note">本地演示账号仅用于开发和评测，不适合生产环境。</small>
       </form>
     </section>
   </main>
@@ -504,8 +592,8 @@ function clarificationHint(result: QueryResult) {
   <div v-else class="app-layout">
     <aside class="history-sidebar" :class="{ open: leftOpen }">
       <div class="brand-row">
-        <span class="brand-symbol">A</span>
-        <div><strong>AskData</strong><small>AI 数据分析</small></div>
+        <span class="brand-symbol">O</span>
+        <div><strong>OfferAgent</strong><small>求职决策助手</small></div>
       </div>
 
       <button class="new-chat" :disabled="loading || !activeConversation?.turns.length" @click="createConversation"><span>＋</span>新建对话</button>
@@ -540,10 +628,10 @@ function clarificationHint(result: QueryResult) {
         <button class="mobile-menu" @click="leftOpen = !leftOpen">☰</button>
         <div>
           <strong>{{ activeConversation?.title ?? "新对话" }}</strong>
-          <span>自然语言问数</span>
+          <span>岗位市场与求职分析</span>
         </div>
         <button class="config-trigger" @click="rightOpen = !rightOpen">上下文设置</button>
-        <span class="model-state"><i></i> 智能确认模式</span>
+        <span class="model-state"><i></i> 证据优先模式</span>
       </header>
 
       <section ref="conversationScroll" class="conversation-scroll">
@@ -552,9 +640,9 @@ function clarificationHint(result: QueryResult) {
         <div v-if="!activeConversation?.turns.length && !loading" class="welcome-panel">
           <div class="welcome-copy">
             <span class="welcome-mark">✦</span>
-            <p class="kicker">ASKDATA STUDIO</p>
-            <h1>想从数据里了解什么？</h1>
-            <p>查询结果会以清晰的表格卡片展示，并支持分页和Excel导出。</p>
+            <p class="kicker">OFFERAGENT WORKSPACE</p>
+            <h1>从岗位市场，找到下一步。</h1>
+            <p>查询岗位趋势、薪资与技能要求，也可以结合简历证据获得求职建议。</p>
             <div class="prompt-list">
               <button v-for="prompt in prompts" :key="prompt" @click="submit(prompt)">
                 <span>↗</span>{{ prompt }}
@@ -571,21 +659,18 @@ function clarificationHint(result: QueryResult) {
             </div>
 
             <div class="assistant-message">
-              <div class="message-avatar assistant">A</div>
+              <div class="message-avatar assistant">O</div>
               <div class="message-body assistant-body">
                 <div class="answer-heading" :class="{ 'qa-heading': turn.result.route !== 'database_query' }">
-                  <div><small>AskData</small><strong v-if="turn.result.route === 'database_query'">{{ turn.result.status === "failed" ? "处理失败" : turn.result.status === "waiting_clarification" ? "需要补充信息" : "查询完成" }}</strong></div>
+                  <div><small>OfferAgent</small><strong v-if="turn.result.route === 'database_query'">{{ turn.result.status === "failed" ? "处理失败" : turn.result.status === "waiting_clarification" ? "需要补充信息" : "岗位查询完成" }}</strong></div>
                   <span v-if="turn.result.route === 'database_query' && turn.result.status === 'completed'">
                     {{ turn.result.workflow_mode === "single_database_agent" ? "单库智能体" : "多库流程" }}
                   </span>
                 </div>
 
-                <div v-if="turn.result.status === 'waiting_clarification'" class="natural-clarification">
-                  <p>{{ turn.result.clarification?.question }}</p>
-                  <small>{{ turn.result.clarification?.reason }}</small>
-                  <span v-if="clarificationHint(turn.result)">请直接回复：{{ clarificationHint(turn.result) }}</span>
-                </div>
+                <ClarificationPanel v-if="turn.result.status === 'waiting_clarification'" :clarification="turn.result.clarification" @choose="submit" />
 
+                <ExecutionTimeline :steps="turn.result.steps" :attempts="turn.result.attempts" :status="turn.result.status" />
                 <details v-if="turn.result.retrieval && turn.result.status !== 'waiting_clarification'" class="execution-details">
                   <summary>查看检索过程</summary>
                   <div class="execution-strip">
@@ -661,8 +746,8 @@ function clarificationHint(result: QueryResult) {
           </div>
 
           <div v-if="loading" class="assistant-message loading-message">
-            <div class="message-avatar assistant">A</div>
-            <div class="loading-copy"><span></span><div><strong>正在分析</strong><small>理解问题并检索相关 Schema…</small></div></div>
+            <div class="message-avatar assistant">O</div>
+            <div class="loading-copy"><span></span><div><strong>正在分析</strong><small>提取岗位口径并核对岗位数据…</small></div></div>
           </div>
         </div>
         </div>
@@ -673,40 +758,62 @@ function clarificationHint(result: QueryResult) {
 
       <footer class="composer">
         <div class="composer-box">
-          <textarea v-model="input" rows="1" placeholder="向数据提问…" @keydown.enter.exact.prevent="submit()"></textarea>
+          <textarea
+            v-model="input"
+            rows="1"
+            placeholder="输入岗位市场或求职分析问题…"
+            @keydown="handleComposerKeydown"
+            @compositionstart="startComposition"
+            @compositionend="endComposition"
+          ></textarea>
           <div class="composer-meta">
-            <span>问数 {{ confirmedFields.length }} 个字段 · 分析 {{ selectedAnalysisTables.length }} 张结果表</span>
-            <button :disabled="!input.trim() || loading" @click="submit()">↑</button>
+            <span>上下文：{{ confirmedFields.length }} 个岗位字段 · {{ selectedAnalysisTables.length }} 个岗位结果</span>
+            <div class="composer-actions">
+              <label class="shortcut-control">
+                <span>提交方式</span>
+                <select v-model="submitShortcut" :disabled="loading" aria-label="选择提交快捷键">
+                  <option value="enter">按 Enter 提交</option>
+                  <option value="metaEnter">按 ⌘+Enter 提交</option>
+                </select>
+              </label>
+              <button class="send-button" :disabled="!input.trim() || loading" aria-label="发送求职问题" @click="submit()">↑</button>
+            </div>
           </div>
         </div>
-        <small>模型可能产生偏差，缺少关键业务口径时会在对话中继续询问。</small>
+        <small>建议提供岗位关键词和城市；缺少目标岗位或简历上下文时，系统会继续询问。</small>
       </footer>
     </main>
 
     <aside class="query-panel" :class="{ open: rightOpen }">
       <div class="panel-header">
-        <div><p class="kicker">CONTEXT CONTROL</p><h2>本次上下文</h2></div>
-        <button @click="resetWorkspace">清空</button>
+        <div><p class="kicker">CAREER CONTEXT</p><h2>求职上下文</h2></div>
+        <button @click="resetWorkspace">清空当前上下文</button>
       </div>
+      <DemoTaskPanel />
+      <p class="context-intro">已加入的岗位字段和岗位结果会用于下一条查询。你可以点击下方“添加到分析上下文”，也可以拖拽添加。</p>
+      <div class="context-summary">{{ contextSummary }}</div>
 
       <section class="context-block query-context-block">
         <div class="context-heading">
-          <div><strong>查询字段</strong><small>用于生成 SQL</small></div>
+          <div><strong>岗位字段</strong><small>用于下一条查询的筛选条件和分析维度</small></div>
           <em>{{ confirmedFields.length }} 个</em>
         </div>
         <div
           class="confirmed-fields-zone"
-          :class="{ filled: confirmedFields.length }"
-          @dragover.prevent
+          :class="{ filled: confirmedFields.length, 'drop-ready': dragTarget === 'field' }"
+          @dragover.prevent="setDragTarget('field')"
+          @dragleave.self="clearDragTarget"
           @drop.prevent="dropConfirmedField"
         >
           <div v-if="!confirmedFields.length" class="empty-confirmation">
             <span>＋</span>
-            <strong>拖入字段</strong>
+            <strong>还没有添加岗位字段</strong>
+            <small>字段来自下方的岗位字段列表</small>
+            <button class="empty-action" @click="scrollToLibrary">去下方添加</button>
           </div>
           <div v-for="field in confirmedFields" :key="`${field.tableId}:${field.name}`" class="confirmed-field">
             <span class="field-badge">{{ isNumericField(field.name, field.tableId) ? "#" : "T" }}</span>
-            <span class="confirmed-field-name"><strong>{{ fieldLabel(field.name, field.tableId) }}</strong><small>{{ tableLabel(field.tableId) }}</small></span>
+            <span class="confirmed-field-name"><strong>{{ fieldLabel(field.name, field.tableId) }}</strong><small>来源：{{ fieldSource(field.name, field.tableId) }}</small></span>
             <button class="save-field" :class="{ saved: isSavedField(field.name, field.tableId) }" :aria-label="`保存${fieldLabel(field.name, field.tableId)}`" @click="toggleConfirmedFieldMemory(field.name, field.tableId)">{{ isSavedField(field.name, field.tableId) ? "★" : "☆" }}</button>
             <button class="remove-field" :aria-label="`移除${fieldLabel(field.name, field.tableId)}`" @click="removeConfirmedField(field.name, field.tableId)">×</button>
           </div>
@@ -715,64 +822,90 @@ function clarificationHint(result: QueryResult) {
 
       <section class="context-block analysis-context-block">
         <div class="context-heading">
-          <div><strong>参考结果</strong><small>用于综合分析</small></div>
+          <div><strong>岗位结果</strong><small>用于下一条问题的对比和综合分析</small></div>
           <em>{{ selectedAnalysisTables.length }} 张</em>
         </div>
         <div
           class="analysis-tables-zone"
-          :class="{ filled: selectedAnalysisTables.length }"
-          @dragover.prevent
+          :class="{ filled: selectedAnalysisTables.length, 'drop-ready': dragTarget === 'result' }"
+          @dragover.prevent="setDragTarget('result')"
+          @dragleave.self="clearDragTarget"
           @drop.prevent="dropAnalysisTable"
         >
           <div v-if="!selectedAnalysisTables.length" class="empty-confirmation">
             <span>＋</span>
-            <strong>拖入已保存结果</strong>
+            <strong>还没有添加岗位结果</strong>
+            <small>结果来自已保存的岗位查询</small>
+            <button class="empty-action" @click="scrollToLibrary">去下方添加</button>
           </div>
           <div v-for="table in selectedAnalysisTables" :key="table.taskId" class="analysis-table-chip">
             <span class="table-mark">▦</span>
-            <span><strong>{{ table.title }}</strong><small>{{ table.rowCount }} 行 · {{ table.columns.slice(0, 3).join(" / ") }}</small></span>
+            <span><strong>{{ table.title }}</strong><small>{{ table.rowCount }} 行 · 来源：{{ table.query }}</small></span>
             <button :aria-label="`移除${table.title}`" @click="removeAnalysisTable(table.taskId)">×</button>
           </div>
         </div>
       </section>
 
-      <section class="recent-library">
+      <section ref="librarySection" class="recent-library">
         <div class="library-heading">
-          <div><strong>字段与结果</strong><small>拖拽或双击添加</small></div>
+          <div><strong>岗位字段与结果</strong><small>这里是查询后保存的资料，点击按钮即可添加到上方上下文</small></div>
         </div>
         <div class="recent-columns">
           <div class="recent-column">
-            <p>字段 · 最多 {{ FIELD_LIBRARY_LIMIT }} 个</p>
-            <div v-if="!fieldLibrary.length" class="library-empty">查询后可收藏关键字段</div>
+            <p>可添加的岗位字段 · 最多 {{ FIELD_LIBRARY_LIMIT }} 个</p>
+            <div v-if="!fieldLibrary.length" class="library-empty">先查询岗位数据，字段会显示在这里</div>
             <div
               v-for="item in fieldLibrary"
               :key="`${item.tableId}:${item.field.name}`"
               class="field-library-row"
               draggable="true"
               @dragstart="dragField($event, item.field, item.tableId)"
+              @dragend="clearDragTarget"
             >
-              <button class="recent-card field-card" @dblclick="addConfirmedField(item.field.name, item.tableId)">
+              <div
+                class="recent-card field-card"
+                role="button"
+                tabindex="0"
+                :aria-label="`${item.field.label}，来源：${fieldSource(item.field.name, item.tableId)}`"
+                @dblclick="addConfirmedField(item.field.name, item.tableId)"
+                @keydown.enter.prevent="addConfirmedField(item.field.name, item.tableId)"
+                @keydown.space.prevent="addConfirmedField(item.field.name, item.tableId)"
+              >
                 <span class="field-badge">{{ item.field.type === "数值" || item.field.type === "整数" ? "#" : "T" }}</span>
-                <span><strong>{{ item.field.label }}</strong><small>{{ tableLabel(item.tableId) }}</small></span>
-              </button>
-              <button class="save-field" :class="{ saved: item.saved }" :aria-label="`${item.saved ? '取消收藏' : '收藏'}${item.field.label}`" @click="toggleSavedField(item.field, item.tableId)">{{ item.saved ? "★" : "☆" }}</button>
+                <span><strong>{{ item.field.label }}</strong><small>来源：{{ fieldSource(item.field.name, item.tableId) }}</small></span>
+              </div>
+              <div class="library-row-actions">
+                <button class="context-add-button" :class="{ added: isConfirmedField(item.field.name, item.tableId) }" :disabled="isConfirmedField(item.field.name, item.tableId)" @click="addConfirmedField(item.field.name, item.tableId)">{{ isConfirmedField(item.field.name, item.tableId) ? "已添加" : "添加到上下文" }}</button>
+                <button class="save-field" :class="{ saved: item.saved }" :aria-label="`${item.saved ? '取消收藏' : '收藏'}${item.field.label}`" @click="toggleSavedField(item.field, item.tableId)">{{ item.saved ? "★" : "☆" }}</button>
+              </div>
             </div>
           </div>
           <div class="recent-column">
-            <p>结果表 · 最多 {{ SAVED_TABLE_LIMIT }} 张</p>
-            <div v-if="!historicalResultTables.length" class="library-empty">保存查询结果后显示</div>
-            <button
+            <p>可添加的岗位结果 · 最多 {{ SAVED_TABLE_LIMIT }} 张</p>
+            <div v-if="!historicalResultTables.length" class="library-empty">先保存岗位查询结果，结果会显示在这里</div>
+            <div
               v-for="table in historicalResultTables"
               :key="table.taskId"
-              class="recent-card table-card"
+              class="table-library-row"
               draggable="true"
               @dragstart="dragAnalysisTable($event, table)"
-              @dblclick="addAnalysisTable(table.taskId)"
+              @dragend="clearDragTarget"
             >
-              <span class="table-mark">▦</span>
-              <span><strong>{{ table.title }}</strong><small>{{ table.rowCount }} 行 · {{ table.query }}</small></span>
-              <em>⋮⋮</em>
-            </button>
+              <div
+                class="recent-card table-card"
+                role="button"
+                tabindex="0"
+                :aria-label="`${table.title}，来源：${table.query}`"
+                @dblclick="addAnalysisTable(table.taskId)"
+                @keydown.enter.prevent="addAnalysisTable(table.taskId)"
+                @keydown.space.prevent="addAnalysisTable(table.taskId)"
+              >
+                <span class="table-mark">▦</span>
+                <span><strong>{{ table.title }}</strong><small>{{ table.rowCount }} 行 · 来源：{{ table.query }}</small></span>
+                <em>⋮⋮</em>
+              </div>
+              <button class="context-add-button" :class="{ added: analysisTableIds.includes(table.taskId) }" :disabled="analysisTableIds.includes(table.taskId)" @click="addAnalysisTable(table.taskId)">{{ analysisTableIds.includes(table.taskId) ? "已添加" : "添加到上下文" }}</button>
+            </div>
           </div>
         </div>
       </section>

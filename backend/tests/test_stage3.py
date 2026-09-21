@@ -242,3 +242,49 @@ def test_resume_upload_and_delete_api_are_explicit(tmp_path: Path, monkeypatch: 
     deleted = client.delete(f"/api/resumes/{resume_id}")
     assert deleted.status_code == 200
     assert deleted.json() == {"deleted": True, "resume_id": resume_id}
+
+
+def test_query_api_forwards_explicit_career_context(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls: dict[str, object] = {}
+
+    class StubService:
+        def submit(
+            self,
+            query: str,
+            session_id: str,
+            workspace: dict[str, object] | None,
+            user_id: str,
+            *,
+            resume_id: str | None = None,
+            target: TargetJobRequest | None = None,
+        ) -> QueryResult:
+            calls.update(
+                query=query,
+                session_id=session_id,
+                workspace=workspace,
+                user_id=user_id,
+                resume_id=resume_id,
+                target=target,
+            )
+            return QueryResult(
+                task_id="task-career-context",
+                status="completed",
+                route="career_advice",
+                message="ok",
+            )
+
+    app = FastAPI()
+    app.include_router(routes.router)
+    monkeypatch.setattr(routes, "service", StubService())
+    response = TestClient(app).post(
+        "/api/query",
+        json={
+            "query": "请分析我的 AI Agent 简历",
+            "session_id": "career-context",
+            "resume_id": "resume_123456",
+            "target": {"keyword": "AI Agent", "city": "上海"},
+        },
+    )
+    assert response.status_code == 200, response.text
+    assert calls["resume_id"] == "resume_123456"
+    assert calls["target"] == TargetJobRequest(keyword="AI Agent", city="上海")
