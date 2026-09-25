@@ -7,26 +7,18 @@ from pydantic import BaseModel, ConfigDict, Field
 from .contracts import CareerReport, TargetJobRequest
 
 
-class ConfirmedField(BaseModel):
-    name: str
-    aggregation: Literal["auto", "group", "sum", "avg", "count", "max", "min"] = "auto"
-    tableId: str | None = None
-
-
 class AnalysisTableInput(BaseModel):
     task_id: str
     title: str
     query: str = ""
     columns: list[str] = Field(default_factory=list)
+    column_labels: dict[str, str] = Field(default_factory=dict)
     rows: list[dict[str, Any]] = Field(default_factory=list)
 
 
 class WorkspaceConfig(BaseModel):
-    schema_fields: list[ConfirmedField] = Field(default_factory=list)
     analysis_table_ids: list[str] = Field(default_factory=list)
     analysis_tables: list[AnalysisTableInput] = Field(default_factory=list)
-    # 兼容旧版前端的 fields 属性。
-    fields: list[ConfirmedField] = Field(default_factory=list)
 
 
 class QueryRequest(BaseModel):
@@ -90,13 +82,14 @@ class QueryResult(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
     task_id: str
     status: Literal["waiting_clarification", "completed", "failed"]
-    route: Literal["database_query", "data_qa", "career_advice", "direct_response"]
+    route: Literal["database_query", "data_qa", "career_advice", "direct_response", "market_data_refresh"]
     message: str
     interpretation: Interpretation | None = None
     clarification: Clarification | None = None
     steps: list[str] = []
     sql: str | None = None
     columns: list[str] = []
+    column_labels: dict[str, str] = Field(default_factory=dict)
     rows: list[dict[str, Any]] = []
     analysis: str | None = None
     saved: bool = False
@@ -112,6 +105,7 @@ class QueryResult(BaseModel):
     standalone_query: str | None = None
     schema_graph: dict[str, Any] | None = None
     workflow_mode: str | None = None
+    crawl_run_id: str | None = None
     report: AnalysisReport | None = None
     career_report: CareerReport | None = None
     report_tool_calls: list[dict[str, Any]] = Field(default_factory=list)
@@ -145,13 +139,6 @@ class SchemaTable(BaseModel):
 
 class SaveMemoryRequest(BaseModel):
     task_id: str
-
-
-class SaveFieldMemoryRequest(BaseModel):
-    table_id: str
-    name: str
-    label: str
-    field_type: str
 
 
 class LoginRequest(BaseModel):

@@ -9,6 +9,8 @@ const props = defineProps<{
 
 const colors = ["#277456", "#62a07f", "#98bca8", "#d2aa60", "#6983a8", "#a77b8c", "#7e9b5c", "#c27c5a"]
 const source = computed(() => props.sources.find((item) => item.taskId === props.spec.source_task_id))
+const categoryLabel = computed(() => source.value?.columnLabels?.[props.spec.category_field] || props.spec.category_field)
+const valueLabel = computed(() => source.value?.columnLabels?.[props.spec.value_field] || props.spec.value_field)
 const points = computed(() => (source.value?.rows ?? [])
   .map((row) => ({
     label: String(row[props.spec.category_field] ?? ""),
@@ -38,7 +40,7 @@ function formatNumber(value: number) {
 
 <template>
   <section class="analysis-chart">
-    <header><div><small>{{ spec.type === "bar" ? "柱状图" : spec.type === "pie" ? "饼图" : spec.type === "line" ? "折线图" : "直方图" }}</small><strong>{{ spec.title }}</strong></div><span>{{ spec.category_field }} × {{ spec.value_field }}</span></header>
+    <header><div><small>{{ spec.type === "bar" ? "柱状图" : spec.type === "pie" ? "饼图" : spec.type === "line" ? "折线图" : "直方图" }}</small><strong>{{ spec.title }}</strong></div><span>{{ categoryLabel }} × {{ valueLabel }}</span></header>
     <div v-if="!source || !points.length" class="chart-empty">找不到该图表引用的数据或数值字段。</div>
     <div v-else-if="spec.type === 'bar' || spec.type === 'line' || spec.type === 'histogram'" class="bar-chart">
       <div v-for="point in points" :key="point.label" class="bar-row">

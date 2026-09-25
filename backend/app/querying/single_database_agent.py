@@ -66,7 +66,6 @@ class SingleDatabaseAgent:
                 "selected_fields": retrieval.get("hits", []),
                 "low_confidence_candidates": retrieval.get("low_confidence_candidates", []),
             },
-            "confirmed_fields": workspace.get("schema_fields", []),
             "confirmed_parameters": workspace.get("confirmed_parameters", {}),
             "schema_text": schema_context,
             "mcp_tools": tools,

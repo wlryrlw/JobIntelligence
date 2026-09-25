@@ -69,6 +69,18 @@ class RequestPreprocessorTest(unittest.TestCase):
         self.assertIn("暂时不可用", result.response)
         self.assertIn("测试模型不可用", result.reason)
 
+    def test_product_identity_is_answered_without_exposing_internal_module(self) -> None:
+        model = CountingModel("direct_response")
+
+        result = RequestPreprocessor(model).prepare("你是什么大模型", "")
+
+        self.assertEqual(model.calls, 0)
+        self.assertEqual(result.action, "direct_response")
+        self.assertEqual(result.source, "product_identity")
+        self.assertIn("OfferAgent", result.response)
+        self.assertIn("底层大模型", result.response)
+        self.assertNotIn("预处理器", result.response)
+
     def test_gray_zone_is_clarified_by_preprocessor_without_retrieval(self) -> None:
         model = CountingModel("direct_response")
 

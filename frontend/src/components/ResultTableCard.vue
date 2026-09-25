@@ -5,6 +5,7 @@ const props = withDefaults(defineProps<{
   title: string
   columns: string[]
   rows: Record<string, unknown>[]
+  columnLabels?: Record<string, string>
   updatedAt?: string
   loading?: boolean
   error?: string
@@ -14,6 +15,7 @@ const props = withDefaults(defineProps<{
   loading: false,
   error: "",
   initialPageSize: 10,
+  columnLabels: () => ({}),
 })
 
 const page = ref(1)
@@ -36,10 +38,14 @@ function nextPage() {
   page.value = Math.min(totalPages.value, page.value + 1)
 }
 
+function displayColumn(column: string) {
+  return props.columnLabels[column] || column
+}
+
 function formatCell(value: unknown, column: string) {
   if (value === null || value === undefined || value === "") return "—"
   if (typeof value !== "number") return String(value)
-  if (/金额|销售额|客单价|收入/.test(column)) {
+  if (/金额|销售额|客单价|收入|薪资|salary|amount/i.test(`${column} ${displayColumn(column)}`)) {
     return new Intl.NumberFormat("zh-CN", { style: "currency", currency: "CNY", maximumFractionDigits: 0 }).format(value)
   }
   if (/率|占比/.test(column)) return `${(value * 100).toFixed(1)}%`
@@ -69,13 +75,13 @@ function exportExcel(event: MouseEvent) {
   try {
     const exportRows = props.rows.slice(0, 5000)
     const columnWidths = props.columns.map((column) => {
-      const maxLength = Math.max(column.length, ...exportRows.slice(0, 200).map((row) => String(row[column] ?? "").length))
+      const maxLength = Math.max(displayColumn(column).length, ...exportRows.slice(0, 200).map((row) => String(row[column] ?? "").length))
       return Math.min(220, Math.max(78, maxLength * 13))
     })
     const columns = columnWidths.map((width) => `<Column ss:Width="${width}"/>`).join("")
     const titleRow = `<Row ss:Height="30"><Cell ss:StyleID="Title" ss:MergeAcross="${Math.max(0, props.columns.length - 1)}"><Data ss:Type="String">${xmlEscape(props.title)}</Data></Cell></Row>`
     const metaRow = `<Row><Cell ss:StyleID="Meta" ss:MergeAcross="${Math.max(0, props.columns.length - 1)}"><Data ss:Type="String">导出时间：${xmlEscape(new Date().toLocaleString("zh-CN"))} · 共 ${props.rows.length} 行</Data></Cell></Row>`
-    const headerRow = `<Row>${props.columns.map((column) => excelCell(column, "Header")).join("")}</Row>`
+    const headerRow = `<Row>${props.columns.map((column) => excelCell(displayColumn(column), "Header")).join("")}</Row>`
     const dataRows = exportRows.map((row) => `<Row>${props.columns.map((column) => excelCell(row[column])).join("")}</Row>`).join("")
     const workbook = `<?xml version="1.0"?><?mso-application progid="Excel.Sheet"?>
       <Workbook xmlns="urn:schemas-microsoft-com:office:spreadsheet" xmlns:ss="urn:schemas-microsoft-com:office:spreadsheet">
@@ -131,7 +137,7 @@ function exportExcel(event: MouseEvent) {
     <template v-else>
       <div class="data-table-wrap">
         <table class="data-table">
-          <thead><tr><th v-for="column in columns" :key="column">{{ column }}</th></tr></thead>
+          <thead><tr><th v-for="column in columns" :key="column">{{ displayColumn(column) }}</th></tr></thead>
           <tbody>
             <tr v-for="(row, rowIndex) in pagedRows" :key="rowIndex">
               <td v-for="column in columns" :key="column" :title="String(row[column] ?? '')">{{ formatCell(row[column], column) }}</td>

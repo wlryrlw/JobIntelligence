@@ -211,7 +211,7 @@ class SchemaIndex:
         workspace: dict[str, Any],
         access_scope: AccessScope | dict[str, Any] | None = None,
     ) -> dict[str, Any]:
-        """将用户确认的字段加入检索结果。"""
+        """将用户确认的数据表加入检索结果；不再接受用户手动字段强制注入。"""
         scope = (
             access_scope
             if isinstance(access_scope, AccessScope)
@@ -219,31 +219,24 @@ class SchemaIndex:
             if access_scope is not None
             else None
         )
-        confirmed_tables = set(workspace.get("confirmed_schema_tables") or [])
-        confirmed_fields = {
-            (item.get("tableId"), item.get("name"))
-            for item in workspace.get("schema_fields", [])
-            if item.get("name")
-        }
-        hits = list(retrieval.get("hits", []))
-        known = {hit["doc_id"] for hit in hits}
+        confirmed_tables = {str(item) for item in workspace.get("confirmed_schema_tables") or [] if item}
+        if not confirmed_tables:
+            return retrieval
+        hits = list(retrieval.get("hits") or [])
+        known = {hit.get("doc_id") for hit in hits}
         for document in self.documents:
-            explicit_field = (document.table_id, document.field_name) in confirmed_fields
-            legacy_field = (None, document.field_name) in confirmed_fields
-            if document.table_id not in confirmed_tables and not explicit_field and not legacy_field:
+            if document.table_id not in confirmed_tables:
                 continue
             if scope and not scope.allows_table(document.database_id, document.table_id):
-                if document.table_id in confirmed_tables or explicit_field:
-                    raise PipelineStageError(
-                        "schema_access_control",
-                        "用户确认内容包含无权访问的Schema字段",
-                    )
-                continue
+                raise PipelineStageError(
+                    "schema_access_control",
+                    "用户确认内容包含无权访问的Schema数据表",
+                )
             if document.doc_id in known:
-                hit = next(hit for hit in hits if hit["doc_id"] == document.doc_id)
+                hit = next(hit for hit in hits if hit.get("doc_id") == document.doc_id)
                 hit.update({
                     "source": "user_confirmed",
-                    "selection_reason": "user_confirmed",
+                    "selection_reason": "user_confirmed_table",
                     "score": 1.0,
                     "rerank_score": 1.0,
                 })
@@ -257,7 +250,7 @@ class SchemaIndex:
                 "rerank_score": 1.0,
                 "keyword_score": 0.0,
                 "vector_score": 0.0,
-                "selection_reason": "user_confirmed",
+                "selection_reason": "user_confirmed_table",
                 "source": "user_confirmed",
             })
             known.add(document.doc_id)

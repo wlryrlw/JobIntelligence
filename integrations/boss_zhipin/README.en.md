@@ -48,10 +48,12 @@ Right after scraping you get: salary ranges, experience requirements, top skill 
 - Plaintext salary (API mode, bypasses font-based obfuscation)
 - Boss activity status as a separate field (`boss_active_status`): list maps `bossOnline`→"在线"; detail can provide finer labels like "刚刚活跃"
 - Dual JSON / CSV output
+- JSON list results also record `requested_pages` / `completed_pages` so callers can show the actual crawl page count; older files without these fields should be shown as unknown or estimated
 - Detail-page JD scraping + skill analysis
 - Aggregated summary + copy-paste prompt after scraping
 - Incremental writes (no data loss on crash)
 - One-shot environment check + persistent isolated Chrome CDP profile
+- `--setup-chrome --no-wait-login` opens the BOSS login page in the dedicated Chrome immediately, so OfferAgent and other external UIs can hand login to the user after launch
 - Multi-dimension filters (scale, funding, salary, experience, degree, industry)
 - macOS + Linux support; Windows is verified by unit tests and basic CLI checks (GBK console crash fixed), real scraping flows still welcome feedback
 

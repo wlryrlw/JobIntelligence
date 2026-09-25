@@ -1,17 +1,21 @@
 from __future__ import annotations
 
+import asyncio
 import uuid
 from typing import Any
 
 from langgraph.types import Command
 
 from ..config import settings
+from ..crawling import CrawlRequest, CrawlRunManager, parse_crawl_intent
 from ..database import SCHEMA
 from ..contracts import TargetJobRequest
 from ..errors import PipelineStageError
 from ..model_client import ModelClient
 from ..models import QueryResult
+from ..models import Clarification, ClarificationOption
 from ..querying import QueryAgent, SchemaCatalogBuilder
+from ..querying.column_labels import column_labels
 from ..retrieval import SchemaIndex
 from ..security import AccessController
 from ..workflows.query_graph import QueryWorkflow
@@ -26,6 +30,7 @@ class AskDataService:
         self,
         model_client: ModelClient | None = None,
         schema_index: SchemaIndex | None = None,
+        crawl_manager: CrawlRunManager | None = None,
     ) -> None:
         self.model_client = model_client or ModelClient(settings)
         self.schema_index = schema_index or SchemaIndex(self.model_client, settings)
@@ -36,8 +41,149 @@ class AskDataService:
         self.workflow = QueryWorkflow(self.model_client, self.schema_index, self.config)
         self.schema_catalog = SchemaCatalogBuilder()
         self.query_agent = QueryAgent(self.model_client, catalog_builder=self.schema_catalog)
+        self.crawl_manager = crawl_manager or CrawlRunManager()
         self.tasks = self.context.tasks
         self.session_tasks = self.context.session_tasks
+
+    async def submit_async(
+        self,
+        query: str,
+        session_id: str,
+        workspace: dict[str, Any] | None = None,
+        user_id: str | None = None,
+        *,
+        resume_id: str | None = None,
+        target: TargetJobRequest | None = None,
+    ) -> QueryResult:
+        """异步 API 入口：采集副作用只创建任务，普通查询放到受控线程边界。"""
+
+        normalized = query.strip()
+        access_scope = self.access_controller.resolve(user_id)
+        scoped_session_id = f"{access_scope.user_id}:{session_id}"
+        pending = self.context.latest_pending(scoped_session_id)
+        if pending and pending.get("user_id") == access_scope.user_id:
+            option_id = self.context.match_clarification(normalized, pending["result"])
+            if option_id in {"start_crawl", "cancel_crawl"}:
+                return await self._resolve_crawl_confirmation(
+                    pending,
+                    option_id,
+                    user_message=normalized,
+                    user_id=access_scope.user_id,
+                )
+        if parse_crawl_intent(normalized):
+            return self._prepare_crawl_confirmation(
+                normalized,
+                session_id,
+                workspace,
+                access_scope.user_id,
+            )
+        return await asyncio.to_thread(
+            self.submit,
+            normalized,
+            session_id,
+            workspace,
+            access_scope.user_id,
+            resume_id=resume_id,
+            target=target,
+        )
+
+    def _prepare_crawl_confirmation(
+        self,
+        query: str,
+        session_id: str,
+        workspace: dict[str, Any] | None,
+        user_id: str,
+    ) -> QueryResult:
+        draft = parse_crawl_intent(query)
+        if draft is None:
+            raise ValueError("无法识别采集请求")
+        task_id = uuid.uuid4().hex[:12]
+        scoped_session_id = f"{user_id}:{session_id}"
+        resolved_workspace = self.context.normalize_workspace(workspace)
+        missing = []
+        if not draft.keyword:
+            missing.append("岗位关键词")
+        if not draft.city:
+            missing.append("城市")
+        crawl_request: CrawlRequest | None = None
+        if not missing:
+            crawl_request = CrawlRequest(
+                keyword=draft.keyword or "",
+                city=draft.city or "",
+                pages=draft.pages,
+                detail=draft.detail,
+                source="chat",
+                confirmation=False,
+            )
+            resolved_workspace["crawl_request"] = crawl_request.model_dump(mode="json")
+            summary = f"关键词“{crawl_request.keyword}”、城市“{crawl_request.city}”、{crawl_request.pages} 页、{'包含' if crawl_request.detail else '不含'} JD 详情。"
+            question = f"我将访问 BOSS 专用 Chrome 采集 {summary}预计需要几分钟，是否开始？"
+            reason = "采集会启动浏览器并访问外部站点，需要用户明确确认。"
+            options = [
+                ClarificationOption(id="start_crawl", label="开始采集", description="确认当前参数并创建异步采集任务", recommended=True),
+                ClarificationOption(id="cancel_crawl", label="先不采集", description="不启动浏览器，返回普通对话", recommended=False),
+            ]
+        else:
+            question = f"要创建采集任务，还需要补充：{'、'.join(missing)}。也可以直接打开右侧“更新岗位数据”面板。"
+            reason = "关键词和城市是采集任务的必填参数。"
+            options = [ClarificationOption(id="cancel_crawl", label="先不采集", description="不启动浏览器", recommended=False)]
+        result = QueryResult(
+            task_id=task_id,
+            status="waiting_clarification",
+            route="market_data_refresh",
+            message="采集前需要确认",
+            clarification=Clarification(parameter="crawl_confirmation", question=question, reason=reason, options=options),
+            steps=["识别岗位数据采集意图", "校验关键词和城市", "等待外部访问确认"],
+            analysis=question,
+            route_reason="采集属于外部副作用，必须先经过用户确认",
+            workflow_mode="crawl_confirmation",
+        )
+        self.context.archive.save_message(scoped_session_id, "user", query, task_id=task_id)
+        self.context.remember(scoped_session_id, result, query, resolved_workspace, user_id)
+        self.context.archive.save_message(scoped_session_id, "assistant", result.analysis or result.message, task_id=task_id, metadata={"route": result.route, "status": result.status})
+        return result
+
+    async def _resolve_crawl_confirmation(
+        self,
+        pending: dict[str, Any],
+        option_id: str,
+        *,
+        user_message: str,
+        user_id: str,
+    ) -> QueryResult:
+        current: QueryResult = pending["result"]
+        task_id = current.task_id
+        if option_id == "cancel_crawl":
+            result = QueryResult(
+                task_id=task_id,
+                status="completed",
+                route="direct_response",
+                message="已取消采集",
+                analysis="没有启动 Chrome，也没有访问 BOSS 直聘。",
+                steps=["收到用户选择", "未创建采集任务"],
+                workflow_mode="crawl_cancelled",
+            )
+        else:
+            raw_request = pending.get("workspace", {}).get("crawl_request")
+            if not raw_request:
+                raise ValueError("采集确认缺少原始参数，请重新提交采集请求")
+            request = CrawlRequest.model_validate(raw_request).model_copy(update={"confirmation": True, "source": "chat"})
+            run = await self.crawl_manager.create(request, owner_id=user_id)
+            result = QueryResult(
+                task_id=task_id,
+                status="completed",
+                route="market_data_refresh",
+                message="采集任务已创建",
+                analysis=f"已创建采集任务 {run.run_id}。请在任务进度卡片或右侧面板查看 Chrome 检查、等待间隔、采集和 ETL 发布进度。",
+                steps=["用户确认采集参数", "创建异步 crawl_run", "等待 Chrome/CDP 预检"],
+                execution_log=[{"stage": "crawl_create", "success": True, "run_id": run.run_id}],
+                workflow_mode="crawl_async",
+                crawl_run_id=run.run_id,
+            )
+        self.context.archive.save_message(pending["session_id"], "user", user_message, task_id=task_id, metadata={"type": "clarification", "option_id": option_id})
+        self.context.remember(pending["session_id"], result, pending["query"], pending["workspace"], user_id)
+        self.context.archive.save_message(pending["session_id"], "assistant", result.analysis or result.message, task_id=task_id, metadata={"route": result.route, "status": result.status})
+        return result
 
     def submit(
         self,
@@ -195,32 +341,16 @@ class AskDataService:
             raise PermissionError("无权保存该查询结果")
         result: QueryResult = task["result"]
         self.memories.save_result(
-            task_id,
-            task["query"],
-            result.analysis or result.message,
-            result.result_title or "查询结果",
-            result.columns,
-            result.rows,
-            scope.user_id,
+            task_id=task_id,
+            query=task["query"],
+            summary=result.analysis or result.message,
+            title=result.result_title or "查询结果",
+            columns=result.columns,
+            rows=result.rows,
+            user_id=scope.user_id,
+            column_labels=result.column_labels,
         )
         result.saved = True
-
-    def save_field_memory(
-        self,
-        table_id: str,
-        name: str,
-        label: str,
-        field_type: str,
-        user_id: str | None = None,
-    ) -> None:
-        scope = self.access_controller.resolve(user_id)
-        table = next((item for item in SCHEMA if item["id"] == table_id), None)
-        database = str(table.get("database") or "askdata_mock") if table else ""
-        if not table or not scope.allows_table(database, table_id):
-            raise PermissionError("无权保存该字段")
-        if not any(field["name"] == name for field in table["fields"]):
-            raise ValueError("字段不存在")
-        self.memories.save_field(table_id, name, label, field_type, scope.user_id)
 
     def delete_memory(self, memory_id: str, user_id: str | None = None) -> None:
         scope = self.access_controller.resolve(user_id)
@@ -232,10 +362,22 @@ class AskDataService:
 
     def list_memories(self, user_id: str | None = None) -> list[dict[str, Any]]:
         scope = self.access_controller.resolve(user_id)
-        return self.memories.list(
+        memories = self.memories.list(
             scope.user_id,
             include_all="admin" in scope.roles,
         )
+        return [
+            {
+                **item,
+                "column_labels": {
+                    **column_labels(item.get("columns") or []),
+                    **dict(item.get("column_labels") or {}),
+                },
+            }
+            if item.get("kind") == "result_table"
+            else item
+            for item in memories
+        ]
 
     def list_mcp_tools(self, user_id: str | None = None) -> list[dict[str, Any]]:
         """返回与模型看到的内容一致的MCP工具定义。"""

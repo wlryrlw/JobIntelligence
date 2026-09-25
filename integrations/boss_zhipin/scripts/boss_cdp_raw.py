@@ -1177,6 +1177,7 @@ def wait_for_login(cdp_port=DEFAULT_CDP_PORT, timeout=DEFAULT_LOGIN_TIMEOUT, int
             delay = min(interval * (2 ** attempt), LOGIN_PROBE_MAX_INTERVAL, remaining)
             time.sleep(delay)
             attempt += 1
+
         print("\n❌ 等待登录超时")
         print("   Chrome 会继续保持打开；登录后可重新运行 --check 或抓取命令")
         return False
@@ -1184,6 +1185,36 @@ def wait_for_login(cdp_port=DEFAULT_CDP_PORT, timeout=DEFAULT_LOGIN_TIMEOUT, int
         if logged_in:
             cdp.send("Target.closeTarget", {"targetId": tid})
         cdp.close()
+
+
+def open_login_page(cdp_port=DEFAULT_CDP_PORT):
+    """Open the dedicated BOSS login page without waiting for user input.
+
+    The OfferAgent UI starts the browser in a separate request and lets the
+    user click “检查环境” after logging in, so this path must navigate the
+    visible dedicated target even when ``--no-wait-login`` is used.
+    """
+    cdp = None
+    try:
+        cdp = CDPSession(cdp_port)
+        _target_id, session_id = create_page_session(cdp, background=False)
+        cdp.send(
+            "Page.navigate",
+            {"url": "https://www.zhipin.com/web/user/"},
+            session_id,
+        )
+        return True
+    except (requests.ConnectionError, requests.Timeout, KeyError,
+            json.JSONDecodeError, websocket.WebSocketException,
+            TimeoutError, RuntimeError) as exc:
+        log.error(f"打开 BOSS 登录页失败: {exc}")
+        return False
+    finally:
+        if cdp is not None:
+            try:
+                cdp.close()
+            except websocket.WebSocketException:
+                log.debug("关闭登录页 CDP 连接失败", exc_info=True)
 
 
 # ============================================================
@@ -1448,6 +1479,7 @@ def scrape_list(keyword, city_input, max_pages, filters, output_path,
     cdp = CDPSession(cdp_port)
     all_jobs = []
     seen = set()
+    completed_pages = 0
     if not output_path:
         output_path = default_output_path("jobs")
 
@@ -1596,6 +1628,18 @@ def scrape_list(keyword, city_input, max_pages, filters, output_path,
 
             if not jobs:
                 print("  ⚠️ 无数据")
+                completed_pages = pg
+                if output_path:
+                    flush_jobs(output_path, {
+                        "keyword": keyword,
+                        "city": city_name,
+                        "filters": filters,
+                        "filter_desc": filter_desc,
+                        "requested_pages": max_pages,
+                        "completed_pages": completed_pages,
+                        "scraper_version": __version__,
+                        "scraped_at": datetime.now().isoformat(),
+                    }, all_jobs)
                 continue
 
             new = 0
@@ -1616,6 +1660,7 @@ def scrape_list(keyword, city_input, max_pages, filters, output_path,
                 print(f"  ✓ {j['title']} | {salary} | {j.get('location','')} | {j.get('boss_name','')}{extra}")
 
             print(f"  本页 {len(jobs)} 条, 新增 {new}, 累计 {len(all_jobs)}")
+            completed_pages = pg
 
             # 每页抓完就写入文件，异常退出也能保留
             if output_path:
@@ -1624,6 +1669,9 @@ def scrape_list(keyword, city_input, max_pages, filters, output_path,
                     "city": city_name,
                     "filters": filters,
                     "filter_desc": filter_desc,
+                    "requested_pages": max_pages,
+                    "completed_pages": completed_pages,
+                    "scraper_version": __version__,
                     "scraped_at": datetime.now().isoformat(),
                 }, all_jobs)
 
@@ -1654,6 +1702,9 @@ def scrape_list(keyword, city_input, max_pages, filters, output_path,
             "city": city_name,
             "filters": filters,
             "filter_desc": filter_desc,
+            "requested_pages": max_pages,
+            "completed_pages": completed_pages,
+            "scraper_version": __version__,
             "scraped_at": datetime.now().isoformat(),
         }, all_jobs)
         print(f"已保存: {output_path}")
@@ -1665,7 +1716,15 @@ def scrape_list(keyword, city_input, max_pages, filters, output_path,
     else:
         print("无数据")
 
-    return {"keyword": keyword, "city": city_name, "total": len(all_jobs), "jobs": all_jobs}
+    return {
+        "keyword": keyword,
+        "city": city_name,
+        "total": len(all_jobs),
+        "requested_pages": max_pages,
+        "completed_pages": completed_pages,
+        "scraper_version": __version__,
+        "jobs": all_jobs,
+    }
 
 
 # ============================================================
@@ -2380,6 +2439,10 @@ def run_setup_chrome(cdp_port=DEFAULT_CDP_PORT, copy_login_state=False,
             print(f"\n✅ CDP 已就绪 (端口 {cdp_port})")
             if wait_login:
                 return 0 if wait_for_login(cdp_port, timeout=login_timeout) else 1
+            if not open_login_page(cdp_port):
+                print("❌ 无法打开 BOSS 登录页，请检查专用 Chrome 的 CDP 状态")
+                return 1
+            print("已打开 BOSS 登录页，请在专用 Chrome 中完成登录")
             return 0
         print(f"\n❌ 端口 {cdp_port} 已被其他 Chrome CDP profile 占用")
         print(f"   请关闭旧 CDP Chrome，或改用 --cdp-port 指定其他端口")
@@ -2409,6 +2472,11 @@ def run_setup_chrome(cdp_port=DEFAULT_CDP_PORT, copy_login_state=False,
         print()
         if not wait_for_login(cdp_port, timeout=login_timeout):
             return 1
+    else:
+        if not open_login_page(cdp_port):
+            print("❌ 无法打开 BOSS 登录页，请检查专用 Chrome 的 CDP 状态")
+            return 1
+        print("已打开 BOSS 登录页，请在专用 Chrome 中完成登录")
     print()
     print(f"示例:")
     print(f"  uv run python integrations/boss_zhipin/scripts/boss_cdp_raw.py --keyword \"AI Agent\" --city 上海 --pages 3")
@@ -2603,6 +2671,9 @@ def main():
         with open(args.input, encoding="utf-8") as f:
             list_data = json.load(f)
         print(f"从文件加载 {len(list_data.get('jobs',[]))} 条: {args.input}")
+        # 外部历史输入可能没有页数元数据；不要用当前 CLI 默认值冒充实际抓取页数。
+        list_data.setdefault("requested_pages", None)
+        list_data.setdefault("completed_pages", None)
     else:
         # 登录/风控判定并入首个真实搜索响应（#53：不再单独发固定关键词的探测请求）
         print("检测登录状态...")

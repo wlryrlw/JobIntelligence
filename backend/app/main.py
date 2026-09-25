@@ -5,7 +5,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from .api.routes import router
+from .api.routes import crawl_manager, router
 from .config import BASE_DIR
 from .demo_data import seed_demo_data
 
@@ -15,7 +15,10 @@ async def lifespan(_: FastAPI):
     database_dir = BASE_DIR / "data" / "databases" / "askdata_mock"
     if not database_dir.exists() or not any(database_dir.glob("*.csv")):
         seed_demo_data(database_dir=database_dir)
-    yield
+    try:
+        yield
+    finally:
+        await crawl_manager.shutdown()
 
 
 app = FastAPI(

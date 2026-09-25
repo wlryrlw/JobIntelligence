@@ -159,6 +159,28 @@ class ChromeSetupTests(unittest.TestCase):
         )
         cdp.close.assert_called_once_with()
 
+    def test_open_login_page_navigates_foreground_target_without_waiting(self):
+        module = load_module()
+        cdp = mock.Mock()
+        with mock.patch.object(module, "CDPSession", return_value=cdp), \
+                mock.patch.object(
+                    module,
+                    "create_page_session",
+                    return_value=("login-target", "login-session"),
+                ) as create_session:
+            self.assertTrue(module.open_login_page(cdp_port=9333))
+
+        create_session.assert_called_once_with(
+            cdp,
+            background=False,
+        )
+        cdp.send.assert_called_once_with(
+            "Page.navigate",
+            {"url": "https://www.zhipin.com/web/user/"},
+            "login-session",
+        )
+        cdp.close.assert_called_once_with()
+
     def test_default_city_is_shanghai_when_not_provided(self):
         module = load_module()
 
@@ -975,6 +997,8 @@ class ChromeSetupTests(unittest.TestCase):
 
         # 两页各 2 条，全部来自被动捕获（无注入 XHR：evaluate 只用于滚动）
         self.assertEqual(result["total"], 4)
+        self.assertEqual(result["requested_pages"], 2)
+        self.assertEqual(result["completed_pages"], 2)
         self.assertEqual([j["title"] for j in result["jobs"]], ["A", "B", "C", "D"])
         self.assertTrue(all(j["salary_source"] == "api" for j in result["jobs"]))
         self.assertEqual(module._request_counter, 2)
@@ -1396,10 +1420,12 @@ class ChromeSetupTests(unittest.TestCase):
             with mock.patch.object(module, "DEFAULT_CDP_DATA_DIR", str(paths["cdp_profile"])), \
                     mock.patch.object(module, "requests", fake_requests), \
                     mock.patch.object(module.subprocess, "run", return_value=type("Completed", (), {"stdout": ps_output, "returncode": 0})()), \
-                    mock.patch.object(module, "wait_for_login") as wait_login:
+                    mock.patch.object(module, "wait_for_login") as wait_login, \
+                    mock.patch.object(module, "open_login_page", return_value=True) as open_login:
                 self.assertEqual(module.run_setup_chrome(cdp_port=9333, wait_login=False), 0)
 
         wait_login.assert_not_called()
+        open_login.assert_called_once_with(9333)
 
     def test_chrome_process_parsing_matches_unquoted_user_data_dir(self):
         module = load_module()

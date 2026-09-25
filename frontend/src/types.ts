@@ -1,28 +1,4 @@
-export interface SchemaField {
-  name: string
-  label: string
-  type: string
-  description?: string
-  aliases?: string[]
-  role?: string
-  aggregation?: string
-  source_type?: string
-  data_profile?: Record<string, unknown>
-  index_content?: Record<string, string>
-}
-
-export interface SchemaTable {
-  id: string
-  name?: string
-  label: string
-  description: string
-  fields: SchemaField[]
-  database?: string
-  domain?: string
-  business_terms?: string[]
-  primary_key?: string[]
-  row_count?: number
-}
+export type CellValue = string | number | null
 
 export interface ClarificationOption {
   id: string
@@ -142,10 +118,99 @@ export interface SqlAttempt {
   retryable: boolean
 }
 
+export interface AnalysisSource {
+  task_id: string
+  title: string
+  query: string
+  row_count: number
+  columns: string[]
+  column_labels?: Record<string, string>
+}
+
+export interface TargetJobRequest {
+  keyword: string
+  city?: string
+  company?: string
+  experience?: string
+  degree?: string
+}
+
+export interface EvidenceRef {
+  source: "resume" | "jd" | "system"
+  quote: string
+  location?: string | null
+}
+
+export interface JobProfileSkill {
+  skill: string
+  category: string
+  occurrence_count: number
+  denominator: number
+  occurrence_rate: number
+  requirement: "must_have" | "preferred" | "unknown"
+  jd_evidence: EvidenceRef[]
+  sample_size_note?: string | null
+  extractor_version: string
+}
+
+export interface JobProfile {
+  target: TargetJobRequest
+  dataset_version: string
+  sample_size: number
+  valid_jd_count: number
+  skills: JobProfileSkill[]
+  salary_sample_count: number
+  salary_p25_k?: number | null
+  salary_p50_k?: number | null
+  salary_p75_k?: number | null
+  experience_distribution: Record<string, number>
+  degree_distribution: Record<string, number>
+  small_sample_warning?: string | null
+}
+
+export interface SkillCoverageItem {
+  skill: string
+  category: string
+  status: "covered" | "partial" | "missing"
+  requirement: "must_have" | "preferred" | "unknown"
+  jd_evidence: EvidenceRef[]
+  resume_evidence: EvidenceRef[]
+  suggestion?: string | null
+  confidence: number
+  extractor_version: string
+  jd_occurrence_rate?: number | null
+}
+
+export interface CareerReport {
+  report_id: string
+  title: string
+  summary: string
+  resume_id: string
+  target: TargetJobRequest
+  job_profile: JobProfile
+  facts: string[]
+  recommendations: string[]
+  skill_coverage: SkillCoverageItem[]
+  rewrite_directions: string[]
+  interview_checklist: string[]
+  generated_at: string
+}
+
+export interface ResumeUploadResponse {
+  resume_id: string
+  filename: string
+  status: "ready"
+  page_count: number
+  skill_count: number
+  project_count: number
+  redaction_count: number
+  message: string
+}
+
 export interface QueryResult {
   task_id: string
   status: "waiting_clarification" | "completed" | "failed"
-  route: "database_query" | "data_qa" | "career_advice" | "direct_response"
+  route: "database_query" | "data_qa" | "career_advice" | "direct_response" | "market_data_refresh"
   message: string
   interpretation: null | {
     metric: string
@@ -163,7 +228,8 @@ export interface QueryResult {
   steps: string[]
   sql: string | null
   columns: string[]
-  rows: Record<string, string | number | null>[]
+  column_labels: Record<string, string>
+  rows: Record<string, CellValue>[]
   analysis: string | null
   saved: boolean
   result_title?: string | null
@@ -184,7 +250,9 @@ export interface QueryResult {
   tool_calls?: CoderToolCall[]
   analysis_sources?: AnalysisSource[]
   workflow_mode?: "qa" | "single_database_fast_path" | "multi_database_handoff" | "langgraph_hitl" | string | null
+  crawl_run_id?: string | null
   report?: AnalysisReport | null
+  career_report?: CareerReport | null
   report_tool_calls?: ReportToolCall[]
   attempts?: SqlAttempt[]
   dataset_version?: string | null
@@ -195,14 +263,15 @@ export interface ReportDataSource {
   taskId: string
   title: string
   columns: string[]
-  rows: Record<string, string | number | null>[]
+  columnLabels?: Record<string, string>
+  rows: CellValueMap[]
 }
 
+export type CellValueMap = Record<string, CellValue>
+
 export interface WorkspaceConfig {
-  schema_fields?: ConfirmedField[]
   analysis_table_ids?: string[]
   analysis_tables?: AnalysisTablePayload[]
-  fields?: ConfirmedField[]
 }
 
 export interface AnalysisTablePayload {
@@ -210,37 +279,21 @@ export interface AnalysisTablePayload {
   title: string
   query: string
   columns: string[]
-  rows: Record<string, string | number | null>[]
-}
-
-export interface AnalysisSource {
-  task_id: string
-  title: string
-  query: string
-  row_count: number
-  columns: string[]
-}
-
-export interface ConfirmedField {
-  name: string
-  aggregation?: "auto"
-  tableId?: string
+  column_labels?: Record<string, string>
+  rows: CellValueMap[]
 }
 
 export interface SavedMemory {
   id: string
-  kind: "result_table" | "schema_field"
+  kind: "result_table"
   created_at: string
   task_id?: string
   query?: string
   summary?: string
   title?: string
   columns?: string[]
-  rows?: Record<string, string | number | null>[]
-  table_id?: string
-  name?: string
-  label?: string
-  field_type?: string
+  column_labels?: Record<string, string>
+  rows?: CellValueMap[]
   user_id?: string
 }
 
@@ -273,4 +326,152 @@ export interface TaskSnapshot {
   session_id: string
   result?: { summary: string; steps: string[]; data: Record<string, unknown> } | null
   error?: { code: string; message: string; detail?: string | null } | null
+}
+
+export type CrawlStatus = "queued" | "running" | "blocked" | "etl_running" | "succeeded" | "failed" | "cancelled"
+export type CrawlPhase = "preflight" | "login" | "list" | "detail" | "etl" | "publish" | "terminal"
+
+export interface CrawlFilters {
+  scale?: string | null
+  stage?: string | null
+  salary?: string | null
+  experience?: string | null
+  degree?: string | null
+  industry?: string | null
+}
+
+export interface CrawlRequest {
+  keyword: string
+  city: string
+  pages: number
+  detail: boolean
+  max_details?: number | null
+  filters: CrawlFilters
+  source: "chat" | "frontend"
+  confirmation: boolean
+  auto_close_chrome: boolean
+  run_smoke_test: boolean
+}
+
+export interface CrawlWarning {
+  code: string
+  message: string
+}
+
+export interface CrawlFailure {
+  code: string
+  message: string
+  diagnostic?: string | null
+}
+
+export interface CrawlRunSnapshot {
+  run_id: string
+  owner_id: string
+  status: CrawlStatus
+  phase: CrawlPhase
+  request: CrawlRequest
+  requested_pages: number
+  completed_pages: number
+  current_page: number | null
+  page_job_count: number
+  new_job_count: number
+  job_count: number
+  detail_total: number | null
+  current_detail: number | null
+  detail_count: number
+  current_item: string | null
+  waiting_seconds_remaining: number | null
+  waiting_seconds_total: number | null
+  waiting_reason: string | null
+  elapsed_seconds: number
+  current_message: string
+  warnings: CrawlWarning[]
+  dataset_version?: string | null
+  scraper_version: string
+  etl_version?: string | null
+  failure?: CrawlFailure | null
+  started_at?: string | null
+  finished_at?: string | null
+  updated_at: string
+  sequence: number
+}
+
+export interface CrawlEvent {
+  event_id: string
+  run_id: string
+  sequence: number
+  event_type: string
+  timestamp: string
+  payload: Record<string, unknown>
+}
+
+export interface CrawlPreflightResult {
+  status: "ready" | "cdp_unavailable" | "login_required" | "risk_control" | "failed"
+  message: string
+  check_passed: boolean
+  smoke_test_passed?: boolean | null
+}
+
+export interface CrawlOptions {
+  cities: string[]
+  max_pages: number
+  max_details: number
+  filters: Record<string, { code: string; label: string }[]>
+}
+
+export interface CrawlBrowserResult {
+  status: "started" | "stopped" | "failed"
+  message: string
+}
+
+export interface MarketDataBreakdown {
+  label: string
+  count: number
+  ratio: number
+}
+
+export interface MarketDataSummary {
+  available: boolean
+  dataset_version?: string | null
+  job_count: number
+  detail_count: number
+  detail_coverage: number
+  first_scraped_at?: string | null
+  latest_scraped_at?: string | null
+  top_cities: MarketDataBreakdown[]
+  top_keywords: MarketDataBreakdown[]
+  top_industries: MarketDataBreakdown[]
+  raw_available: boolean
+  raw_job_count: number
+  raw_detail_count: number
+  raw_latest_scraped_at?: string | null
+  raw_pending_publish: boolean
+}
+
+export interface MarketDataRun {
+  run_id: string
+  keyword: string
+  city: string
+  status: string
+  source_status: string
+  requested_pages?: number | null
+  completed_pages?: number | null
+  page_count?: number | null
+  page_count_estimated: boolean
+  job_count: number
+  detail_count: number
+  started_at: string
+  finished_at: string
+  dataset_version: string
+  etl_version: string
+  archive_available: boolean
+  deletable: boolean
+  delete_block_reason?: string | null
+}
+
+export interface MarketDataDeleteResult {
+  deleted: boolean
+  run_id: string
+  dataset_version?: string | null
+  message: string
 }

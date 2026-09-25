@@ -33,6 +33,7 @@ class CrawlStatus(StrEnum):
     QUEUED = "queued"
     RUNNING = "running"
     BLOCKED = "blocked"
+    ETL_RUNNING = "etl_running"
     SUCCEEDED = "succeeded"
     FAILED = "failed"
     CANCELLED = "cancelled"

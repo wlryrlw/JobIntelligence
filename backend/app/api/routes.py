@@ -9,6 +9,17 @@ from ..career import ResumeNotFound, ResumeParseError, ResumeStore, ResumeStoreE
 from ..career.models import ResumeUploadResponse
 from ..config import BASE_DIR
 from ..contracts import TaskSnapshot, TaskStatus, UserRequest
+from ..crawling import (
+    CrawlBrowserResult,
+    CrawlBrowserStartRequest,
+    CrawlOptions,
+    CrawlPreflightRequest,
+    CrawlPreflightResult,
+    CrawlRequest,
+    CrawlRequestError,
+    CrawlRunManager,
+    CrawlRunSnapshot,
+)
 from ..errors import PipelineStageError
 from ..fake_executor import default_fake_executor
 from ..models import (
@@ -16,19 +27,27 @@ from ..models import (
     LoginRequest,
     QueryRequest,
     QueryResult,
-    SaveFieldMemoryRequest,
     SaveMemoryRequest,
     SchemaTable,
+)
+from ..market_data import (
+    MarketDataDeleteResult,
+    MarketDataError,
+    MarketDataRun,
+    MarketDataSummary,
+    MarketDataSummaryService,
 )
 from ..security import AuthService, AuthUser
 from ..services.askdata_service import AskDataService
 
 
 router = APIRouter(prefix="/api")
-service = AskDataService()
 auth_service = AuthService()
 fake_executor = default_fake_executor(BASE_DIR)
 resume_store = ResumeStore()
+crawl_manager = CrawlRunManager()
+service = AskDataService(crawl_manager=crawl_manager)
+market_data_summary = MarketDataSummaryService()
 
 
 def require_user(
@@ -134,6 +153,162 @@ def config(_: AuthUser = Depends(require_user)) -> dict:
     return service.status()
 
 
+@router.get("/crawl/options", response_model=CrawlOptions)
+def crawl_options(_: AuthUser = Depends(require_user)) -> CrawlOptions:
+    return crawl_manager.options()
+
+
+@router.get("/market-data/summary", response_model=MarketDataSummary)
+async def market_data_summary_endpoint(
+    _: AuthUser = Depends(require_user),
+) -> MarketDataSummary:
+    """返回当前已发布岗位快照的规模和固定维度分布。"""
+    return await asyncio.to_thread(market_data_summary.get)
+
+
+@router.get("/market-data/runs", response_model=list[MarketDataRun])
+async def market_data_runs_endpoint(
+    _: AuthUser = Depends(require_user),
+) -> list[MarketDataRun]:
+    """返回可审计的岗位采集批次及其删除前置条件。"""
+    return await asyncio.to_thread(market_data_summary.runs)
+
+
+@router.delete("/market-data/runs/{run_id}", response_model=MarketDataDeleteResult)
+async def delete_market_data_run_endpoint(
+    run_id: str,
+    _: AuthUser = Depends(require_user),
+) -> MarketDataDeleteResult:
+    try:
+        return await asyncio.to_thread(market_data_summary.delete_run, run_id)
+    except MarketDataError as error:
+        raise HTTPException(status_code=409, detail=str(error)) from error
+
+
+@router.post("/crawl/preflight", response_model=CrawlPreflightResult)
+async def crawl_preflight(
+    payload: CrawlPreflightRequest,
+    _: AuthUser = Depends(require_user),
+) -> CrawlPreflightResult:
+    return await crawl_manager.preflight(run_smoke_test=payload.run_smoke_test)
+
+
+@router.post("/crawl/browser/start", response_model=CrawlBrowserResult)
+async def crawl_browser_start(
+    payload: CrawlBrowserStartRequest,
+    _: AuthUser = Depends(require_user),
+) -> CrawlBrowserResult:
+    try:
+        return await crawl_manager.start_browser(confirmation=payload.confirmation)
+    except CrawlRequestError as error:
+        raise HTTPException(status_code=400, detail=error.message) from error
+
+
+@router.post("/crawl/browser/stop", response_model=CrawlBrowserResult)
+async def crawl_browser_stop(_: AuthUser = Depends(require_user)) -> CrawlBrowserResult:
+    return await crawl_manager.stop_browser()
+
+
+@router.post("/crawl-runs", response_model=CrawlRunSnapshot, status_code=202)
+async def create_crawl_run(
+    payload: CrawlRequest,
+    user: AuthUser = Depends(require_user),
+) -> CrawlRunSnapshot:
+    try:
+        return await crawl_manager.create(payload, owner_id=user.user_id)
+    except CrawlRequestError as error:
+        status_code = 409 if error.code == "active_run_exists" else 400
+        raise HTTPException(status_code=status_code, detail=error.message) from error
+
+
+@router.get("/crawl-runs/{run_id}", response_model=CrawlRunSnapshot)
+def crawl_run(run_id: str, user: AuthUser = Depends(require_user)) -> CrawlRunSnapshot:
+    try:
+        snapshot = crawl_manager.get(run_id, owner_id=user.user_id)
+    except PermissionError as error:
+        raise HTTPException(status_code=403, detail=str(error)) from error
+    if snapshot is None:
+        raise HTTPException(status_code=404, detail="采集任务不存在")
+    return snapshot
+
+
+@router.get("/crawl-runs/{run_id}/events")
+async def crawl_run_events(
+    run_id: str,
+    request: Request,
+    user: AuthUser = Depends(require_user),
+    last_event_id: str | None = Header(default=None, alias="Last-Event-ID"),
+) -> EventSourceResponse:
+    try:
+        snapshot = crawl_manager.get(run_id, owner_id=user.user_id)
+    except PermissionError as error:
+        raise HTTPException(status_code=403, detail=str(error)) from error
+    if snapshot is None:
+        raise HTTPException(status_code=404, detail="采集任务不存在")
+
+    after_sequence = 0
+    if last_event_id:
+        if last_event_id.isdigit():
+            after_sequence = int(last_event_id)
+        else:
+            match = last_event_id.rsplit("-", 1)
+            if len(match) == 2 and match[1].isdigit():
+                after_sequence = int(match[1])
+
+    async def stream():
+        nonlocal after_sequence
+        while True:
+            if await request.is_disconnected():
+                return
+            try:
+                events = crawl_manager.events(run_id, owner_id=user.user_id, after_sequence=after_sequence)
+            except PermissionError:
+                return
+            for event in events:
+                after_sequence = event.sequence
+                yield {
+                    "id": event.event_id,
+                    "event": event.event_type,
+                    "data": json.dumps(event.model_dump(mode="json"), ensure_ascii=False),
+                }
+            current = crawl_manager.get(run_id, owner_id=user.user_id)
+            if current is None:
+                return
+            if current.status in {"succeeded", "failed", "cancelled"} and after_sequence >= current.sequence:
+                return
+            await asyncio.sleep(0.2)
+
+    return EventSourceResponse(
+        stream(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+        ping=10,
+    )
+
+
+@router.post("/crawl-runs/{run_id}/cancel", response_model=CrawlRunSnapshot)
+async def cancel_crawl_run(run_id: str, user: AuthUser = Depends(require_user)) -> CrawlRunSnapshot:
+    try:
+        return await crawl_manager.cancel(run_id, owner_id=user.user_id)
+    except KeyError as error:
+        raise HTTPException(status_code=404, detail="采集任务不存在") from error
+    except PermissionError as error:
+        raise HTTPException(status_code=403, detail=str(error)) from error
+
+
+@router.post("/crawl-runs/{run_id}/resume", response_model=CrawlRunSnapshot)
+async def resume_crawl_run(run_id: str, user: AuthUser = Depends(require_user)) -> CrawlRunSnapshot:
+    try:
+        return await crawl_manager.resume(run_id, owner_id=user.user_id)
+    except KeyError as error:
+        raise HTTPException(status_code=404, detail="采集任务不存在") from error
+    except PermissionError as error:
+        raise HTTPException(status_code=403, detail=str(error)) from error
+    except CrawlRequestError as error:
+        status_code = 409 if error.code == "active_run_exists" else 400
+        raise HTTPException(status_code=status_code, detail=error.message) from error
+
+
 @router.get("/mcp/tools")
 def mcp_tools(
     user: AuthUser = Depends(require_user),
@@ -181,12 +356,24 @@ def delete_resume(
 
 
 @router.post("/query", response_model=QueryResult)
-def query(
+async def query(
     payload: QueryRequest,
     user: AuthUser = Depends(require_user),
 ) -> QueryResult:
     workspace = payload.workspace.model_dump(exclude_none=True) if payload.workspace else None
-    return service.submit(
+    submit_async = getattr(service, "submit_async", None)
+    if submit_async is None:
+        # 保持旧版轻量测试替身和外部集成的兼容性；正式服务始终走异步入口。
+        return await asyncio.to_thread(
+            service.submit,
+            payload.query,
+            payload.session_id,
+            workspace,
+            user.user_id,
+            resume_id=payload.resume_id,
+            target=payload.target,
+        )
+    return await submit_async(
         payload.query,
         payload.session_id,
         workspace,
@@ -314,26 +501,6 @@ def save_memory(
 @router.get("/memories")
 def memories(user: AuthUser = Depends(require_user)) -> list[dict]:
     return service.list_memories(user.user_id)
-
-
-@router.post("/memories/fields")
-def save_field_memory(
-    payload: SaveFieldMemoryRequest,
-    user: AuthUser = Depends(require_user),
-) -> dict[str, bool]:
-    try:
-        service.save_field_memory(
-            payload.table_id,
-            payload.name,
-            payload.label,
-            payload.field_type,
-            user.user_id,
-        )
-    except PermissionError as error:
-        raise HTTPException(status_code=403, detail=str(error)) from error
-    except ValueError as error:
-        raise HTTPException(status_code=400, detail=str(error)) from error
-    return {"saved": True}
 
 
 @router.delete("/memories/{memory_id}")

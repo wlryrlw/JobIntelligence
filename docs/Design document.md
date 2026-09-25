@@ -586,7 +586,7 @@ run_id
 
 ### 阶段 5 · 前端交互重构与 CareerAgent 用户入口
 
-> **状态：方案阶段，尚未执行。** 本阶段针对阶段 4 后暴露出的产品可用性问题进行收敛：移除“岗位字段”这一当前没有形成稳定后端语义的交互概念，保留并强化“岗位结果”作为后续分析上下文；补齐简历上传和简历证据分析的前端闭环；改善结果管理、可读性、对话布局和中文字段展示。除非另有说明，本阶段不改变岗位 ETL、DuckDB 只读安全边界和 CareerAgent 的事实计算逻辑。
+> **状态：已执行（2026-09-22）。** 本阶段针对阶段 4 后暴露出的产品可用性问题进行收敛：移除“岗位字段”这一当前没有形成稳定后端语义的交互概念，保留并强化“岗位结果”作为后续分析上下文；补齐简历上传和简历证据分析的前端闭环；改善结果管理、可读性、对话布局和中文字段展示。除非另有说明，本阶段不改变岗位 ETL、DuckDB 只读安全边界和 CareerAgent 的事实计算逻辑。
 
 #### 5.1 目标、范围与设计原则
 
@@ -883,6 +883,351 @@ welfare           → 福利
 
 **阶段 5 验收标准**：用户无需添加任何岗位字段即可完成岗位查询；能够在右侧上传符合要求的简历并看到明确成功/失败状态；能够选择目标岗位并在弹窗中阅读技能覆盖报告、岗位画像和求职建议；能够将报告下载为可读 Markdown；能够删除任意已保存岗位结果且不影响原始数据和聊天记录；对话布局和字号在桌面及移动端可读；查询结果表、保存结果和导出文件中的岗位字段均以中文展示。
 
+### 阶段 6 · 对话与前端驱动的岗位采集闭环
+
+> **状态：MVP 已执行（2026-09-22）。** 本阶段把当前需要用户手动运行 `boss-zhipin-scraper`、填写参数、再手动执行 ETL 的流程收敛为一个受控的异步采集闭环。当前已落地前端表单入口、Chrome CDP 启停/预检、异步 worker、结构化进度 SSE、取消/恢复、ETL 原子发布，以及对话入口的结构化意图、确认和异步任务创建；对话入口和前端入口共用同一 `CrawlRequest`。用户既可以在对话中要求 Agent 更新岗位数据，也可以在前端通过“采集/更新岗位数据”按钮填写参数；两条入口必须复用同一套 Pydantic 契约、任务状态机、worker、事件流和 ETL 发布逻辑。
+
+本阶段的关键原则是：对话可以发起采集，但不能在 LangGraph 或 FastAPI 请求线程内同步运行浏览器。`Coordinator` 只负责识别意图、校验参数、检查数据新鲜度、请求用户确认和创建下游任务；`MarketDataAgent` 负责驱动受控 worker、接收状态、启动 ETL 和返回数据集版本；真正的 Chrome/CDP 操作继续由 `integrations/boss_zhipin/scripts/boss_cdp_raw.py` 完成。已有 scraper 的被动 Network 捕获、隔离 Chrome profile、登录态探测、风控停止、请求预算、详情提取和随机节奏不在 OfferAgent 中重写。
+
+#### 6.1 目标、范围与非目标
+
+本阶段必须完成以下目标：
+
+1. **统一采集入口**：自然语言入口和前端表单入口最终都生成同一个 `CrawlRequest`，不再让前端拼接 CLI 字符串，也不让 LLM 直接生成 shell 命令或文件路径。
+2. **异步可恢复任务**：采集任务立即返回 `crawl_run_id`，在独立 worker 中执行；快照写入 Runtime Store，事件使用 append-only JSONL，并通过 SSE 或 REST 轮询展示。
+3. **复用受控 scraper**：worker 只调用现有 BOSS 集成的稳定 CLI/入口，使用参数数组和服务端生成的输出路径；不绕过登录、验证码、`_security_check` 或风控限制。
+4. **自动 ETL 和原子发布**：列表/详情采集成功后自动调用现有 ETL，校验数据质量、写入版本目录并原子切换 `data/databases/jobs_market`；只有发布成功才允许后续查询使用新 `dataset_version`。
+5. **人工介入可恢复**：未登录、Chrome/CDP 不可用或遇到验证页时进入明确的 `blocked` 状态，给用户可执行的提示；用户完成登录或人工验证后可以恢复或重新开始，不自动重复撞击目标站点。
+6. **结果可追踪**：每次运行都能关联请求参数、来源入口、`task_id`、`crawl_run_id`、scraper/ETL 版本、原始输入归档、质量报告和最终 `dataset_version`。
+7. **批次可审计删除**：用户可以从左侧“当前岗位信息”进入采集历史，查看已采集次数、每次时间、岗位/详情数量和关键词/城市等主要特征；确认删除某次后，系统只在归档完整时重建并重新发布剩余批次，不能把原始 `job-result` 直接当作查询快照。
+
+本阶段明确不做：定时爬取、多源招聘网站统一适配、分布式任务队列、自动投递/发消息、自动绕过验证码或风控、批量账号/代理池、读取用户主 Chrome 的 Cookie 并静默复制登录态。最小前端入口不是完整的“采集管理后台”；历史批次差异对比、批量删除、定时策略和多账号管理保留到后续阶段。本阶段已支持单批次历史查看和逐批次删除。
+
+#### 6.2 两种用户入口与统一用户体验
+
+##### 6.2.1 对话入口
+
+对话中出现“抓取/采集/更新/重新搜索岗位”等明确意图时，预处理器新增 `market_data_refresh`（或内部统一命名为 `crawl_jobs`）动作。Agent 按以下顺序工作：
+
+1. 从用户话语中提取关键词、城市、页数、是否抓取 JD 详情和可选筛选条件，输出经过 Pydantic 校验的 `CrawlRequest`，不直接输出命令行参数。
+2. 关键词缺失时进入澄清；城市无法解析时要求用户选择受支持城市或输入明确的城市码；页数、详情数量和筛选条件超出上限时直接返回可操作的校验错误。
+3. `Coordinator` 查询当前活动采集任务和 `crawl_runs`。同一关键词/城市已有足够新鲜的数据时，先告知数据集版本和时间，询问用户是否仍然刷新；已有同一 profile 的采集任务运行时，不重复创建任务。
+4. 对即将访问 BOSS、预计页数、是否读取详情和预计耗时做一次结构化确认。用户的“开始采集/确认/继续”只能确认已经展示过的参数，不能修改隐藏参数或绕过安全检查。
+5. 创建独立 `crawl_run_id`，立即返回“已排队”和任务订阅信息。原始岗位查询如果是由同一个对话触发，可以保存 `parent_task_id` 和 `resume_query`；采集发布成功后，由 Coordinator 重新检查数据新鲜度并继续原查询，不把正在执行的爬虫嵌入原查询调用栈。
+6. 若 worker 报告登录失效、验证页或风控，助手只展示人工处理提示和恢复操作；不得让 LLM 自己决定更高频率重试、改变 CDP 行为或调用未授权的浏览器接口。
+
+示例对话：
+
+~~~text
+用户：请抓取上海的 AI Agent 岗位，最多 3 页，包含 JD 详情。
+助手：将使用关键词“AI Agent”、城市“上海”、3 页并抓取详情；这会访问你已登录的 BOSS 直聘浏览器，预计需要几分钟。是否开始？
+用户：开始采集。
+助手：已创建采集任务 crawl_run_id=...，正在检查 Chrome 登录状态；你可以在当前任务卡片中查看进度。
+~~~
+
+##### 6.2.2 前端入口
+
+左侧边栏在“新建对话”下方放置独立的对话历史滚动区；对话历史使用 `flex: 1` 和 `min-height: 0`，新增多条记录时只在该区域滚动，不挤占底部固定区域。对话历史下方先显示“更新岗位数据”按钮，再显示“当前岗位信息”卡片，页面最底部固定显示本地用户信息和退出按钮。信息卡片至少包括岗位总数、有效 JD 数与覆盖率、数据版本、采集时间范围，以及城市/关键词/行业的主要分布。卡片同时显示最新原始 `job-result` 的岗位数量，并明确“可查询快照”和“原始抓取结果”的区别；若原始结果尚未经过 ETL 发布，显示待发布提示，不能将其直接当作可查询数据。概览通过只读接口读取，不触发爬虫；采集成功发布新版本后自动刷新，也支持手动刷新。点击“更新岗位数据”打开模态对话框；右侧上下文面板只保留简历和岗位结果上下文，不再承载采集表单。当前 MVP 使用 `CrawlPanel.vue`（后续可拆成 `CrawlRequestDialog.vue`、`CrawlRunCard.vue` 和 `CrawlTimeline.vue`），至少包含：
+
+- 关键词：必填，默认可从当前查询的 `TargetJobRequest` 带入；
+- 城市：必填，使用 `data/city_codes.json` 生成可搜索选择器，同时允许输入受支持的 9 位城市码；
+- 抓取页数：1–10，默认 3；
+- 是否抓取详情：默认开启；关闭时界面明确提示 CareerAgent 可能因缺少 JD 证据无法分析；
+- 最大详情数：可选，不能超过岗位列表数或服务端上限；
+- 可选过滤：公司规模、融资阶段、薪资、经验、学历、行业，前端展示中文名称，后端只接受白名单代码；
+- “启动专用 Chrome”“检查环境”“开始采集”“取消”“关闭专用 Chrome”按钮，以及当前 Chrome/CDP 和登录状态；启动按钮只调用 `--setup-chrome --no-wait-login`，登录由用户在专用窗口中人工完成。
+- “成功后自动关闭专用 Chrome”选项，对应 scraper 的 `--close-chrome`；未勾选时默认保留专用 Chrome，用户可以在任务结束后点击“关闭专用 Chrome”，对应 `--stop-chrome`。失败、登录失效和风控时不自动关闭窗口，保留人工处理现场。
+- “当前岗位信息”卡片的“详情”按钮打开采集历史弹窗，显示已采集次数、每次采集完成时间、岗位数、详情数、页数以及关键词/城市/是否含 JD 等主要特征。新采集使用 scraper 记录的请求页数和完成页数；旧批次缺少元数据时只能根据历史每页 15 条的契约显示带标记的估算值。每个批次先显示是否具备删除条件，用户二次确认后才调用删除接口；删除期间当前岗位信息重新读取，后台采集任务不会被该弹窗取消。
+
+开始前前端展示本次请求摘要和风险提示。启动后复用 `ExecutionTimeline` 的事件样式，展示“排队 → 检查环境 → 列表采集 → 详情采集 → ETL → 发布”的阶段。阻塞时显示“打开采集浏览器/完成登录/重新检查/取消”操作；成功时展示岗位数、详情数、质量告警、`dataset_version` 和“使用最新数据继续查询”按钮。关闭模态框只关闭界面，不取消后台任务；左侧入口需要保留“后台采集中”的轻量状态提示，重新打开时恢复同一个 `crawl_run_id` 的快照和 SSE 订阅。
+
+由于 scraper 内置了保护性等待，进度不能假装成均匀的百分比。列表翻页通常包含约 12–22 秒的等待，详情页包含页面加载、滚动和约 10–25 秒的详情间隔；前端必须展示已用时间、当前页/总页数、岗位/详情计数和“等待页面加载/等待翻页/等待下一条详情”文案。百分比只能作为粗略阶段提示，不能承诺精确剩余时间；可以根据已完成页数给出“预计还需数分钟”的区间提示。
+
+两种入口不得各自实现一套状态。对话返回的 `crawl_run_id` 可以直接被前端任务卡片订阅，前端创建的运行记录也应能在对话中通过运行 ID 查询和解释。
+
+#### 6.3 任务、Agent 与 worker 的职责边界
+
+推荐的数据流如下：
+
+~~~text
+聊天 / 前端表单
+       │  CrawlRequest（Pydantic）
+       ▼
+FastAPI：参数校验、权限、幂等检查、创建任务
+       │
+       ▼
+Coordinator：意图、澄清、数据新鲜度、用户确认、父任务关联
+       │
+       ▼
+MarketDataAgent / CrawlRunManager
+       │  生成服务端路径、申请 profile 锁、启动 worker
+       ▼
+独立子进程：boss_cdp_raw.py
+       │  Chrome CDP / 用户人工登录 / 列表与详情结果 JSON
+       ▼
+原始归档 → ETL 校验 → 版本目录 → 原子发布 jobs_market
+       │
+       ├── Runtime Store：快照与事件
+       └── SSE / 轮询：前端、对话和恢复任务
+~~~
+
+职责必须保持单向：
+
+- `Coordinator` 不直接调用 scraper、DuckDB 或 shell；它只创建、查询、取消和恢复采集任务。
+- `MarketDataAgent` 不解释岗位匹配结论，也不生成 SQL；它只处理采集参数、worker 生命周期、ETL 和数据集发布。
+- `CrawlWorker` 不接触 LLM，不修改用户会话，不执行任意用户命令；它只运行受控的 BOSS CLI 并把有限的进度和错误映射为稳定事件。
+- `ETL` 不读取前端状态，不根据模型文本决定是否发布；它只接收经过校验的 JSON 输入，负责规范化、去重、质量报告和原子切换。
+- `QueryAgent` 仍然只读访问已发布的 CSV 视图。它不能在查询过程中偷偷启动采集；需要新鲜数据时由 Coordinator 先发起独立采集任务。
+
+为了避免同步阻塞，worker 必须通过 `asyncio.create_subprocess_exec()` 或受控进程池启动，禁止 `shell=True`。FastAPI 事件循环只负责提交、读取状态和发送事件，不等待数分钟的 Chrome 操作完成。
+
+#### 6.4 采集契约与状态机
+
+现有 `CrawlRunResult` 作为向后兼容的完成结果保留；阶段 6 增加快照、请求和事件契约。核心字段如下：
+
+~~~text
+CrawlRequest
+  keyword: str                  # 1–200，去除首尾空白
+  city: str                     # 中文城市名或已解析的合法 city_code
+  pages: int                    # 1–10
+  detail: bool                  # 是否抓取详情，默认 true
+  max_details: int | None       # 服务端上限内的详情数
+  filters: CrawlFilters         # 只接受白名单代码
+  source: chat | frontend       # 入口审计
+  confirmation: bool            # 已确认当前展示的外部访问参数
+
+CrawlRunSnapshot
+  run_id: str
+  task_id: str | None
+  parent_task_id: str | None
+  status: queued | running | blocked | etl_running | succeeded | failed | cancelled
+  phase: preflight | login | list | detail | etl | publish | terminal
+  request: CrawlRequest
+  requested_pages: int
+  completed_pages: int
+  job_count: int
+  detail_count: int
+  warnings: list[CrawlWarning]
+  dataset_version: str | None
+  scraper_version: str
+  etl_version: str | None
+  failure: FailureInfo | None
+
+CrawlEvent
+  event_id: str
+  run_id: str
+  task_id: str | None
+  sequence: int
+  event_type: crawl.created | crawl.preflight | crawl.login_required |
+              crawl.list_progress | crawl.detail_progress | crawl.blocked |
+              crawl.etl_started | crawl.dataset_published | crawl.completed |
+              crawl.failed | crawl.cancelled
+  timestamp: datetime
+  payload: 已校验、脱敏且有大小上限的事件内容
+~~~
+
+状态转移只允许以下路径：
+
+~~~text
+created → queued → running
+                    ├→ blocked(login_required | risk_control | cdp_unavailable)
+                    │       └→ running（仅用户完成明确动作后恢复）
+                    ├→ etl_running → succeeded
+                    ├→ cancelled
+                    └→ failed
+~~~
+
+`succeeded` 可以携带 `warnings`，例如部分详情页失败但列表和 ETL 质量仍满足发布条件；`failed` 表示没有发布新数据集。`blocked` 不是普通失败，前端必须显示可执行的人机协作操作。终态不可再次转换，恢复应创建新的事件并继续同一个 run，或在无法安全恢复时创建新的 run 并通过 `retry_of` 关联。
+
+失败枚举至少包括：`invalid_request`、`active_run_exists`、`cdp_unavailable`、`login_required`、`risk_control`、`network_timeout`、`empty_result`、`detail_partial`、`worker_crashed`、`worker_timeout`、`etl_failed`、`publish_failed`、`cancelled`。异常原文只能放在受限诊断字段中，不能让异常字符串成为公共状态或前端逻辑判断依据。
+
+#### 6.5 API 与事件协议
+
+新增 API 建议如下。请求体和响应体都使用 Pydantic 模型，禁止 `dict` 直接穿过核心链路：
+
+| API | 作用 | 说明 |
+|---|---|---|
+| `POST /api/crawl/preflight` | 检查 CDP、专用 Chrome profile 和登录状态 | 只做检查，不抓取、不写岗位数据 |
+| `POST /api/crawl/browser/start` | 在用户明确点击或确认后启动隔离 Chrome，并打开 BOSS 登录页 | 不复制主 Chrome Cookie；登录仍由用户人工完成；接口立即返回，不等待登录 |
+| `POST /api/crawl-runs` | 创建独立采集任务 | 校验确认、幂等、profile 锁和参数上限后立即返回 |
+| `GET /api/crawl-runs/{run_id}` | 获取采集快照 | 可在刷新页面后恢复 |
+| `GET /api/crawl-runs/{run_id}/events` | SSE 重放和持续订阅 | 使用 `Last-Event-ID`/sequence 断线恢复 |
+| `POST /api/crawl-runs/{run_id}/cancel` | 请求取消 | 终止 worker，不撤销已经发布的旧数据集 |
+| `POST /api/crawl-runs/{run_id}/resume` | 恢复人工处理后的阻塞任务 | 只能恢复同一用户、同一请求和仍有效的 profile |
+| `GET /api/market-data/runs` | 查询已发布采集批次历史 | 返回归档是否完整以及是否允许删除 |
+| `DELETE /api/market-data/runs/{run_id}` | 删除指定采集批次并重建快照 | 仅在归档完整、ETL 锁可获取时执行；删除前端需二次确认 |
+
+`POST /api/query` 保持普通查询兼容；当意图是 `market_data_refresh` 时，不能在请求中执行 scraper，而是返回一个包含 `crawl_run_id`、`task_id`、状态和订阅 URL 的异步结果。若参数不足，返回现有澄清协议；若用户尚未确认外部访问，返回带参数摘要的 `waiting_clarification`。阶段 6 不新增一套对话专用采集 API。
+
+事件 payload 只允许以下类型的信息：当前阶段、页数进度、岗位/详情计数、耗时、错误枚举、人工操作提示、质量统计、数据集版本和下一步动作。不得写入 Cookie、Authorization、完整 JD、Chrome profile 路径、完整 stderr、模型隐藏思维链或未经脱敏的个人数据。stdout/stderr 只保留截断后的本地诊断文件，前端显示结构化摘要。
+
+#### 6.6 worker 调用与采集过程
+
+##### 6.6.1 参数映射
+
+worker 只接受 `CrawlRequest`，并由服务端生成固定的命令参数和路径。典型调用形态如下，实际实现使用 `sys.executable` 和参数数组，不拼接 shell 字符串：
+
+~~~text
+python integrations/boss_zhipin/scripts/boss_cdp_raw.py
+  --keyword <validated keyword>
+  --city <validated city name/code>
+  --pages <validated pages>
+  --format json
+  --output data/local/boss_zhipin/job-result/<run_id>/boss_jobs.json
+  --detail-output data/local/boss_zhipin/job-result/<run_id>/boss_details.json
+  [--no-detail]
+  [--max-details <validated limit>]
+  [--scale/--stage/--salary/--experience/--degree/--industry <allow-listed code>]
+  [--close-chrome]
+~~~
+
+前端的每个选项与 `integrations/boss_zhipin/README.md` 的 CLI 参数一一对应：关键词、城市、页数、详情开关、最大详情数和六类筛选分别映射到 `--keyword`、`--city`、`--pages`、`--detail/--no-detail`、`--max-details`、`--scale/--stage/--salary/--experience/--degree/--industry`。输出格式固定为 JSON，输出文件、详情文件、CDP 端口、profile、`--allow-dom-fallback`、`--merge` 和 `--analysis` 不暴露给普通前端表单：前者由 worker 生成，后者会改变数据安全或职责边界。`--smoke-test` 是开始前的可选环境检查，不是抓取参数。
+
+前端和 LLM 不可传入 `--cdp-port`、`--output`、`--detail-output`、任意脚本路径或任意环境变量。CDP 端口、profile、超时和结果目录由本地配置及 worker 统一管理。输出目录必须位于 `data/local/boss_zhipin/job-result/<run_id>/`，并通过路径解析检查不能逃逸到工作区之外。
+
+worker 的前置流程：
+
+1. 校验运行时依赖和任务参数；检查是否有同一 Chrome profile 的活动锁。
+2. 执行现有 `--check` 等价的 preflight；未启动 Chrome 或未登录时进入 `blocked`，不立即标记为系统失败。
+3. 若用户明确点击“启动采集浏览器”，调用现有 `--setup-chrome --no-wait-login` 启动隔离 profile，并由 scraper 在该专用 Chrome 中直接打开 BOSS 登录页后立即返回；用户在专用窗口完成登录后，前端调用 `--check` 等价的 preflight，并可选调用 `--smoke-test`。不默认复制主 Chrome 登录态，不记录 Cookie。
+4. 启动列表采集。列表页继续由页面自身请求触发，scraper 只通过 Network 域被动捕获；翻页仍使用既有的滚动机制和随机等待，worker 将其映射为结构化 waiting/list 事件。
+5. 列表完成后，按请求决定是否抓详情。详情页登录失效、验证页或正文截断必须停止或记录稳定告警，不能把截断 JD 当成有效证据；详情间隔事件必须在前端可见。
+6. worker 关闭自己创建的 target；默认不主动关闭专用 Chrome。若用户勾选 `--close-chrome`，只有 scraper 成功路径才自动关闭；失败、登录失效、风控和异常都保留窗口。用户也可以随时单独点击 `--stop-chrome` 精准关闭专用 profile，不影响主 Chrome。
+7. 采集成功后将原始输入、命令摘要、退出码和 hash 写入该 run 的本地归档，再由 MarketDataAgent 启动 ETL。
+
+当前 scraper 的人类可读 stdout 不能直接作为公共事件协议。推荐为现有 CLI 增加可选的 progress sink/NDJSON 输出，只增加事件输出，不把采集逻辑拆出 `boss_cdp_raw.py`；在该集成目录内修改时同步 README、README.en、CHANGELOG、版本号和 mock 测试。第一版如果暂时没有逐页进度，也必须由 worker 发布稳定的阶段级事件，不能让前端解析整段自然语言日志作为状态机。
+
+##### 6.6.2 超时、取消和崩溃
+
+- 列表、单详情、整次运行分别配置有界超时；详情页超时按“详情失败/告警”处理，整次 worker 超时按 `worker_timeout` 终止。
+- 取消时先向 worker 进程组发送温和终止信号，等待短时间后再强制终止；取消事件写入 Runtime Store。取消不会删除历史已发布版本，也不会把半成品目录切换为 `jobs_market`。
+- worker 非零退出、输出 JSON 无法通过 Pydantic 校验、目录缺文件或 manifest 校验失败时进入 `failed`，保留受限诊断和输入归档，禁止静默回退到旧数据并标记成功。
+- 进程重启后，`CrawlRunManager` 根据快照和事件判断未完成任务。默认不自动重放可能访问外部站点的阶段；需要用户明确选择“恢复/重新开始”，避免服务重启造成重复采集。
+
+#### 6.7 ETL、质量门禁与数据发布
+
+采集与发布分为两个可审计阶段：
+
+~~~text
+原始 JSON
+  → SourceJob/SourceDetail Pydantic 校验
+  → job_id 去重与增量合并
+  → salary/location/tags/JD 规范化
+  → 质量报告
+  → 生成 _schema.json / _manifest.json
+  → 校验文件 hash
+  → 原子切换 jobs_market
+~~~
+
+具体规则：
+
+- ETL 输入只使用本次 `run_id` 目录中的 JSON，不直接读取默认 scraper 目录下“最新文件”，防止并发任务串数据。
+- `data/local/etl/<run_id>/` 保存输入副本和质量报告；`data/databases/.jobs_market_versions/` 保存候选版本；现有 ETL 锁继续作为发布锁。
+- 删除批次只删除该批次的 ETL/采集归档和包含该 `run_id` 的旧发布版本；如果仍有其他批次，按原始 `started_at` 顺序离线重跑归档，生成新的 `dataset_version`、Schema、质量报告和 manifest 后原子切换；如果删除最后一个批次，则移除受控的 `jobs_market` 发布链接。归档缺失、发布链接不是受控 symlink 或校验失败时拒绝删除。
+- 列表无有效岗位时拒绝发布；源状态为失败、阻塞或取消时拒绝发布；schema、manifest 或文件 hash 不一致时拒绝发布。
+- 详情少于列表时根据 `detail` 策略处理：`detail=false` 允许列表库成功；`detail=true` 默认允许“部分成功 + warning”但必须记录 `missing_detail_count`、失败原因和可用于 CareerAgent 的有效 JD 数；如果调用方要求“详情必须完整”，则质量门禁失败且不发布。
+- 只有 ETL 完成、候选快照验证通过并原子切换成功后，才写入 `dataset_version` 并发送 `crawl.dataset_published`。
+- ETL 失败时保留旧的 `jobs_market`；查询继续使用旧版本，但前端必须明确显示“采集失败，仍在使用旧数据”，不能把旧版本伪装成新鲜数据。
+- 采集成功后，Coordinator 重新基于 `crawl_runs` 和 `dataset_version` 检查父查询的关键词、城市和数据新鲜度，然后才允许 QueryAgent 或 CareerAgent 使用新版本。
+
+`crawl_runs` 至少补充或确认以下审计字段：`source`、`parent_task_id`、`requested_pages`、`completed_pages`、`detail_requested`、`detail_count`、`failure_code`、`warning_codes`、`scraper_version`、`etl_version`、`dataset_version`、`source_hash`、`started_at`、`finished_at`。这些字段用于解释数据血缘，不把完整 JD 或用户隐私写入执行事件。
+
+#### 6.8 前端组件与状态管理
+
+建议新增或拆分以下前端职责：
+
+- `CrawlRequestDialog.vue`：弹窗内的表单、前端即时校验、参数摘要和确认；不拼接 CLI。左侧只保留启动按钮，不在右侧上下文面板重复展示采集表单。
+- `CrawlRunCard.vue`：展示一次采集的状态、计数、数据集版本、质量告警和操作按钮。
+- `CrawlTimeline.vue`：复用 `SseEvent` 的 sequence/Last-Event-ID 逻辑，渲染阶段事件和人工介入提示。
+- `api.ts`：增加 `preflightCrawl()`、`createCrawlRun()`、`getCrawlRun()`、`cancelCrawlRun()`、`resumeCrawlRun()` 和事件订阅；所有响应使用明确的 TypeScript 类型。
+- `api.ts`：另增加 `marketDataRuns()` 和 `deleteMarketDataRun()`；`CrawlPanel.vue` 在当前岗位信息卡片中提供删除历史入口和滚动历史弹窗，删除后同时刷新岗位概览与批次列表。
+- `types.ts`：补充 `CrawlRequest`、`CrawlRunSnapshot`、`CrawlRunResult`、`CrawlWarning`、`CrawlEvent` 和 `CrawlFailureCode`，不使用 `any` 接收后端状态。
+
+前端状态至少区分：`idle`、`validating`、`checking`、`waiting_clarification`、`queued`、`running`、`blocked`、`etl_running`、`succeeded`、`failed`、`cancelled`。SSE 连接断开时保留最后的 sequence 和 run ID，重连时发送 `Last-Event-ID`；如果 SSE 不可用，使用相同的 `GET /api/crawl-runs/{run_id}` 轮询，不重复创建任务。
+
+成功卡片应显示：
+
+1. 关键词、城市、采集时间和数据集版本；
+2. 列表岗位数、有效详情数、完成页数和质量告警；
+3. “使用最新数据继续查询”“查看质量报告”“重新采集”“关闭”操作；
+4. 明确说明新版本已经发布，后续 SQL 查询和 CareerAgent 分析会读取哪个版本。
+
+失败卡片应按错误码给出下一步。例如 `login_required` 提示用户在专用 Chrome 中登录后重新检查；`risk_control` 提示人工处理验证并等待，不提供自动绕过按钮；`etl_failed` 提示保留旧数据并查看质量报告；`active_run_exists` 提供跳转到已有任务，而不是再创建一个任务。
+
+#### 6.9 Agent 工具与 Coordinator 集成
+
+给模型暴露的是受限的结构化工具，而不是 `exec`：
+
+~~~text
+request_market_data(CrawlRequest) -> CrawlRequestProposal
+start_confirmed_crawl(CrawlRequest, confirmation_id) -> CrawlRunHandle
+get_crawl_status(run_id) -> CrawlRunSnapshot
+cancel_crawl(run_id) -> CrawlRunSnapshot
+~~~
+
+工具层必须再次校验用户权限、确认 ID、请求归属、活动任务、页数和白名单过滤器。模型不能传递命令行、脚本路径、Cookie、Chrome profile 路径或任意 SQL。`start_confirmed_crawl` 只创建任务并返回句柄，不等待 worker 完成。
+
+Coordinator 的路由规则：
+
+- `market_data_refresh`：参数完整且已确认时创建采集任务；否则澄清或等待确认；不直接进入 QueryAgent。
+- `database_query`：检查数据新鲜度；数据满足要求时直接查询；数据不足时返回“需要采集”的结构化建议，由用户选择是否启动采集。
+- `career_advice`：检查简历和目标岗位；岗位库不满足新鲜度时，同样创建独立采集任务，完成后再恢复原分析任务。
+- `data_qa`：只分析已经返回的结果，不因为图表请求隐式启动爬虫。
+
+如果用户的原始问题是“帮我找上海最新的 Agent 岗位”，系统可以在确认后自动执行“采集 → ETL → 查询”；如果用户只是说“更新数据”，采集成功后只返回新版本摘要，不自动生成额外报告。两种行为由 `parent_task_id` 和 `resume_policy` 显式区分，不靠模型自由发挥。
+
+#### 6.10 权限、隐私和合规边界
+
+- 采集属于访问外部站点和启动浏览器的副作用，必须来自当前用户明确的聊天确认或前端按钮；普通查询、图表和简历分析不能隐式触发。
+- 当前本地单用户模式沿用 `local_user`；所有 run、事件和取消操作校验用户归属。未来多用户时必须把 Chrome profile、数据集和任务权限绑定到 owner，不能共享登录态。
+- 不收集、不展示、不持久化 Cookie、Authorization、完整 CDP WebSocket URL、Chrome profile 内容或登录页面截图。任务事件只记录“已登录/需登录/遇到验证”这类稳定状态。
+- 采集输出、完整 JD 和质量报告只写入本地忽略目录；公开仓库继续只放 fixture、schema 说明和脱敏测试数据。
+- 严格继承 `integrations/boss_zhipin/` 的红线：只旁听页面自身请求，不主动伪造指纹、不注入绕过代码、不使用验证码绕过、代理池或高频重试；遇到验证页必须停下并交给用户人工处理。
+- 所有重试必须有界且按错误码区分：网络短暂失败可以有限退避；登录失效、风控、权限和参数错误不得自动重试。
+- 原始岗位数据可能包含公司联系人、JD 和链接等敏感或受限制内容；执行日志和 SSE 只保留统计和错误摘要，不能把完整岗位列表逐条复制到日志或对话上下文。
+
+#### 6.11 实施顺序与测试计划
+
+建议按以下顺序落地，每一步都可以用 fake worker 验证，不以真实 Chrome 作为普通后端开发的前置条件：
+
+1. **契约和状态机**：扩展 `CrawlRequest`、`CrawlRunSnapshot`、错误枚举和事件类型；补齐状态转移、终态和 owner 校验测试。
+2. **CrawlRunManager 与 Runtime Store**：实现快照原子写入、事件 sequence、断线重放、幂等创建、取消和重启恢复；先接入可控 fake worker。
+3. **preflight 与 worker adapter**：实现参数到 argv 的白名单映射、路径安全、profile 锁、超时、进程组取消和 stdout/stderr 受限归档；验证不使用 `shell=True`。
+4. **ETL 发布闭环**：把每次采集输出固定到 run 目录，调用现有 ETL，验证质量门禁、旧版本保留、manifest hash 和原子 symlink 切换。
+5. **API/SSE**：实现创建、状态、事件、取消、恢复和预检接口；API 测试覆盖重连、重复请求、并发运行和失败后旧数据可用。
+6. **Coordinator/Agent**：增加采集意图、参数抽取、澄清、确认、数据新鲜度和父任务恢复；模型调用使用 mock structured output，不能用真实 LLM 作为单元测试依赖。当前对话入口已能识别明确的关键词/城市/页数请求，在确认后创建异步 `crawl_run`，不把 scraper 嵌入查询调用栈。
+7. **前端入口**：已接入单次采集面板、城市/筛选选项、Chrome 启停、预检、SSE 进度、取消/恢复和成功版本提示；对话返回显式 `crawl_run_id`，后续可把该 ID 直接绑定到同一进度卡片。
+8. **集成回归**：使用本地 fake scraper 输出跑端到端“创建 → worker → ETL → 发布 → 查询”测试；再对实际 BOSS 集成执行其既有 mock 测试。
+
+最低测试集合：
+
+- 合法/非法关键词、城市、页数、详情数和筛选代码的 Pydantic 校验；任意用户路径、命令参数和 shell 注入字符串都被拒绝；
+- 同一 profile 并发创建时只有一个任务成功进入 worker，另一个返回 `active_run_exists`；不同 run 的输出目录和 ETL 输入不会串用；
+- worker 登录失效、风控、验证页、空结果、详情部分失败、非零退出、超时和取消分别映射到稳定状态；
+- worker 崩溃或 ETL 失败时 `jobs_market` 仍指向旧版本，不能出现半成品发布；发布成功后 `dataset_version`、manifest 和 `crawl_runs` 一致；
+- 事件 sequence 连续、重复事件幂等、SSE 断线按 `Last-Event-ID` 恢复，页面刷新不会重复创建采集任务；
+- 对话必须先澄清/确认，不能由普通 `database_query` 或 `data_qa` 隐式启动采集；父任务只在新版本发布后恢复；
+- 前端 `vue-tsc --noEmit`、生产构建、桌面/移动端状态展示和错误提示通过；
+- 不修改 scraper 核心抓取逻辑时，运行普通后端测试和离线 fake worker 即可；只有实际修改 `integrations/boss_zhipin/` 的 CDP、登录、列表或详情链路时，才执行该集成要求的 `--check` → `--smoke-test` → `--pages 2 --no-detail` 真机验证。
+
+#### 6.12 阶段 6 验收标准与 MVP/Stretch
+
+**阶段 6 MVP 验收标准（当前已完成的可验证子集）**：
+
+- 用户可以在对话中提出包含关键词/城市的采集请求，Agent 展示参数摘要并在用户选择“开始采集”后创建异步任务；前端入口使用同一契约展示完整进度；
+- 用户可以在前端点击“采集/更新岗位数据”，设置关键词、城市、页数、详情、最大详情数和六类筛选条件，并看到异步任务状态；
+- 前端明确体现 `--setup-chrome`、`--check`、可选 `--smoke-test`、手动 `--stop-chrome` 和成功路径 `--close-chrome`，不会默认复制主 Chrome 登录态；
+- 前端能够展示保护性等待期间的当前阶段、已用时间、页数/计数和等待文案，不用虚假的实时百分比替代真实状态；
+- 任务不会阻塞 FastAPI/LangGraph 请求线程；刷新页面或断线后可以通过 run ID 和事件 sequence 恢复；
+- 未登录、Chrome 不可用和风控验证会进入可理解的人工阻塞状态，不会自动绕过或无限重试；
+- 采集成功后自动完成 ETL、质量报告和原子数据集发布，前端显示岗位数、详情数、告警和 `dataset_version`；
+- 左侧采集入口下方能够查看当前已发布岗位总数、有效 JD 覆盖率、数据版本、采集时间范围和主要分布；概览只读 `jobs_market` 当前快照，采集成功后自动刷新；
+- 发布成功后新的 SQL 查询和 CareerAgent 使用新版本，采集失败时旧版本继续可查询且用户能看见失败原因；
+- 取消、重复提交、worker 崩溃、ETL 失败和权限隔离都有测试，且不泄漏 Cookie、完整 JD 或未脱敏运行日志。
+- 采集历史弹窗显示次数、时间、数据量和主要特征；删除唯一批次会清空受控快照，删除多批次中的一次会从保留归档重建快照；缺少归档时禁止删除并给出原因。
+
+**Stretch**：历史批次差异对比、批量删除、定时刷新、多个来源的统一 `SourceAdapter`、多用户独立浏览器 profile、分布式队列和更细粒度的逐岗位进度。它们不能成为 BOSS 单次采集闭环的前置依赖。
+
 ### MVP 与 Stretch 边界
 
 **MVP 必须完成**：
@@ -897,7 +1242,7 @@ welfare           → 福利
 
 **Stretch 可延期**：
 
-- 采集管理页，先保留 CLI + 任务 API；
+- 完整采集管理页（历史批次、差异对比、批量控制和定时任务），阶段 6 先实现单次采集按钮与任务 API；
 - 前端评测页和 ECharts 高级配置；
 - LLM/regex 技能抽取的完整对比实验；
 - OCR、多格式文档、多用户权限、多库查询和自动投递能力。

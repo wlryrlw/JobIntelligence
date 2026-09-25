@@ -26,6 +26,7 @@ from ..models import QueryResult
 from ..preprocessing import RequestPreprocessor
 from ..querying.duckdb_engine import DuckDbEngine
 from ..querying.data_qa_agent import DataQaAgent
+from ..querying.column_labels import column_labels
 from ..querying.models import SqlExecution
 from ..querying.response_generator import ResponseGenerator
 from ..querying.query_agent import QueryAgent
@@ -267,6 +268,7 @@ class QueryWorkflow:
                     message="查询完成",
                     sql=result.sql,
                     columns=result.columns,
+                    column_labels=column_labels(result.columns),
                     rows=result.rows,
                     steps=[
                         "意图路由：database_query",
@@ -473,7 +475,6 @@ class QueryWorkflow:
         )
         workspace = state.get("workspace") or {}
         query_workspace = {
-            "schema_fields": list(workspace.get("schema_fields") or []),
             "confirmed_schema_tables": list(workspace.get("confirmed_schema_tables") or []),
             "confirmed_parameters": dict(workspace.get("confirmed_parameters") or {}),
         }

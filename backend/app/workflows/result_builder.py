@@ -6,6 +6,7 @@ from ..database import SCHEMA
 from ..models import Clarification, Interpretation, QueryResult
 from ..querying.models import SqlExecution
 from ..querying.data_qa_agent import DataQaResult
+from ..querying.column_labels import column_labels
 
 
 class ResultBuilder:
@@ -56,8 +57,8 @@ class ResultBuilder:
             columns=[],
             rows=[],
             analysis=response,
-            route_reason=str(intent.get("reason") or "预处理模型直接回复"),
-            steps=["一次请求预处理", "预处理模型直接生成回复"],
+            route_reason=str(intent.get("reason") or "OfferAgent直接回答"),
+            steps=["识别请求类型", "生成 OfferAgent 回答"],
             execution_log=execution_log,
             workflow_mode="route_fallback" if fallback_used else "direct_response",
         )
@@ -135,11 +136,12 @@ class ResultBuilder:
                     (state.get("extraction") or {}).get("time_expressions") or []
                 ) or "未指定",
                 table="、".join(table_labels) or "Schema召回数据表",
-                assumptions=["Schema字段经过Rerank阈值筛选", "用户拖入字段为确定性约束"],
+                assumptions=["Schema字段经过Rerank阈值筛选", "岗位结果上下文按需传入"],
             ),
             steps=steps,
             sql=combined.sql,
             columns=combined.columns,
+            column_labels=column_labels(combined.columns),
             rows=combined.rows,
             analysis=final.get("analysis"),
             route_reason=str(state.get("intent", {}).get("reason") or "问数"),

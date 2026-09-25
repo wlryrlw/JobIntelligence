@@ -50,10 +50,12 @@ uv run python integrations/boss_zhipin/scripts/job_summary.py
 - 明文薪资（API 模式，绕过字体反爬）
 - Boss 活跃状态独立字段（`boss_active_status`）：列表兼容 `bossOnline`→「在线」，详情可得到「刚刚活跃」等更细状态
 - JSON / CSV 双格式输出
+- JSON 列表结果同时记录 `requested_pages` / `completed_pages`，便于上层展示实际采集页数；读取没有该字段的旧文件时应显示为未知或估算值
 - 详情页 JD 抓取 + 技能分析
 - 抓取后聚合摘要 + 可复制提示词
 - 增量写入（异常退出不丢数据）
 - 一键环境检查 + 持久隔离 Chrome CDP profile
+- 使用 `--setup-chrome --no-wait-login` 时会在专用 Chrome 中直接打开 BOSS 登录页，方便 OfferAgent 等外部界面启动后交给用户登录
 - 多维筛选（规模、融资、薪资、经验、学历、行业）
 - macOS + Linux 支持；Windows 已通过单元测试与基础 CLI 验证（GBK 控制台崩溃已修复），真实抓取链路仍欢迎反馈
 

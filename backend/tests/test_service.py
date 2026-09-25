@@ -20,7 +20,7 @@ class FakeModelClient:
         self.rerank_queries: list[str] = []
 
     def chat_json(self, system: str, user: str) -> dict:
-        if "问数系统的请求预处理器" in system:
+        if "OfferAgent 的请求理解与回复模块" in system:
             query = user.split("当前问题：", 1)[-1].split("\n近期轻量上下文：", 1)[0]
             if "你好" in query:
                 return {
@@ -290,7 +290,7 @@ class SqlGenerationFailureClient(FakeModelClient):
 
 class PreprocessingFailureClient(FakeModelClient):
     def chat_json(self, system: str, user: str) -> dict:
-        if system.startswith("你是问数系统的请求预处理器"):
+        if system.startswith("你是 OfferAgent 的请求理解与回复模块"):
             raise RuntimeError("预处理模型连接超时")
         return super().chat_json(system, user)
 
@@ -390,13 +390,14 @@ class AskDataServiceTest(unittest.TestCase):
         self.assertIsNone(result.clarification)
         self.assertEqual(result.analysis_sources[0]["task_id"], source.task_id)
 
-    def test_confirmed_field_defaults_to_auto_without_user_aggregation(self) -> None:
+    def test_legacy_field_workspace_is_ignored(self) -> None:
         payload = QueryRequest.model_validate({
             "query": "查询本月销售额",
             "workspace": {"schema_fields": [{"name": "paid_amount", "tableId": "orders_current"}]},
         })
 
-        self.assertEqual(payload.workspace.schema_fields[0].aggregation, "auto")
+        self.assertIsNotNone(payload.workspace)
+        self.assertNotIn("schema_fields", payload.workspace.model_dump())
 
     def test_relative_date_calls_datetime_tool_before_sql(self) -> None:
         result = self.service.submit(
@@ -488,7 +489,16 @@ class AskDataServiceTest(unittest.TestCase):
         self.assertIsNone(result.sql)
         self.assertEqual(self.client.chat_calls, 0)
 
-    def test_dragged_field_is_forced_into_schema_graph(self) -> None:
+    def test_product_identity_does_not_expose_internal_preprocessor(self) -> None:
+        result = self.service.submit("你是什么agent", "identity-session")
+
+        self.assertEqual(result.route, "direct_response")
+        self.assertIn("OfferAgent", result.analysis)
+        self.assertNotIn("预处理器", result.analysis)
+        self.assertNotIn("问数系统", result.analysis)
+        self.assertEqual(self.client.chat_calls, 0)
+
+    def test_legacy_field_workspace_does_not_force_schema_hits(self) -> None:
         result = self.service.submit(
             "查询本月各地区销售额",
             "s1",
@@ -498,9 +508,7 @@ class AskDataServiceTest(unittest.TestCase):
                 ]
             },
         )
-        hit = next(item for item in result.retrieval["hits"] if item["doc_id"] == "customers.customer_level")
-        self.assertEqual(hit["score"], 1.0)
-        self.assertEqual(hit["source"], "user_confirmed")
+        self.assertFalse(any(item.get("source") == "user_confirmed" for item in result.retrieval["hits"]))
 
     def test_selected_result_table_is_used_only_as_analysis_context(self) -> None:
         source = self.service.submit("查询本月各地区销售额", "s1")

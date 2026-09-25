@@ -24,6 +24,7 @@ class MemoryStore:
         columns: list[str],
         rows: list[dict[str, Any]],
         user_id: str = "demo_analyst",
+        column_labels: dict[str, str] | None = None,
     ) -> None:
         memory_id = f"result:{task_id}"
         self._upsert(user_id, {
@@ -35,27 +36,8 @@ class MemoryStore:
             "summary": summary,
             "title": title,
             "columns": columns,
+            "column_labels": column_labels or {},
             "rows": rows,
-            "created_at": datetime.now().isoformat(timespec="seconds"),
-        })
-
-    def save_field(
-        self,
-        table_id: str,
-        name: str,
-        label: str,
-        field_type: str,
-        user_id: str = "demo_analyst",
-    ) -> None:
-        memory_id = f"field:{table_id}.{name}"
-        self._upsert(user_id, {
-            "id": memory_id,
-            "user_id": user_id,
-            "kind": "schema_field",
-            "table_id": table_id,
-            "name": name,
-            "label": label,
-            "field_type": field_type,
             "created_at": datetime.now().isoformat(timespec="seconds"),
         })
 
@@ -99,7 +81,7 @@ class MemoryStore:
         *,
         include_all: bool = False,
     ) -> list[dict[str, Any]]:
-        items = self._read_all()
+        items = [item for item in self._read_all() if item.get("kind") != "schema_field"]
         if include_all or user_id is None:
             return items
         return [item for item in items if self._owner(item) == user_id]

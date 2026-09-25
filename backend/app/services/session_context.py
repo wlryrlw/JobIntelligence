@@ -159,6 +159,7 @@ class SessionContext:
                     "title": str(provided.get("title") or "参考表格"),
                     "query": str(provided.get("query") or ""),
                     "columns": list(provided.get("columns") or []),
+                    "column_labels": dict(provided.get("column_labels") or {}),
                     "row_count": len(provided.get("rows") or []),
                 })
                 continue
@@ -171,6 +172,7 @@ class SessionContext:
                 "title": result.result_title or "参考表格",
                 "query": task.get("query", ""),
                 "columns": result.columns,
+                "column_labels": result.column_labels,
                 "row_count": len(result.rows),
             })
         return headers
@@ -188,6 +190,7 @@ class SessionContext:
                 "result_title": result.result_title,
                 "analysis": result.analysis or "",
                 "columns": result.columns,
+                "column_labels": result.column_labels,
                 "row_count": len(result.rows),
             })
         return output
@@ -225,6 +228,7 @@ class SessionContext:
                     "query": str(provided.get("query") or ""),
                     "row_count": len(provided.get("rows") or []),
                     "columns": list(provided.get("columns") or []),
+                    "column_labels": dict(provided.get("column_labels") or {}),
                 }
                 sources.append(source)
                 payloads.append({
@@ -244,6 +248,7 @@ class SessionContext:
                 "query": task.get("query", ""),
                 "row_count": len(result.rows),
                 "columns": result.columns,
+                "column_labels": result.column_labels,
             }
             sources.append(source)
             payloads.append({
@@ -256,7 +261,8 @@ class SessionContext:
     @staticmethod
     def normalize_workspace(workspace: dict[str, Any] | None) -> dict[str, Any]:
         resolved = dict(workspace or {})
-        resolved["schema_fields"] = list(resolved.get("schema_fields") or resolved.get("fields") or [])
+        resolved.pop("schema_fields", None)
+        resolved.pop("fields", None)
         resolved["analysis_table_ids"] = list(dict.fromkeys(resolved.get("analysis_table_ids") or []))
         resolved["analysis_tables"] = list(resolved.get("analysis_tables") or [])
         resolved["confirmed_schema_tables"] = list(dict.fromkeys(resolved.get("confirmed_schema_tables") or []))
@@ -266,7 +272,6 @@ class SessionContext:
     @staticmethod
     def query_workspace(workspace: dict[str, Any]) -> dict[str, Any]:
         return {
-            "schema_fields": list(workspace.get("schema_fields") or []),
             "confirmed_schema_tables": list(workspace.get("confirmed_schema_tables") or []),
             "confirmed_parameters": dict(workspace.get("confirmed_parameters") or {}),
         }
