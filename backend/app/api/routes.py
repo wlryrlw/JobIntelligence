@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+from typing import Any
 from fastapi import APIRouter, Depends, File, Header, HTTPException, Request, UploadFile
 from sse_starlette.sse import EventSourceResponse
 
@@ -37,8 +38,9 @@ from ..market_data import (
     MarketDataSummary,
     MarketDataSummaryService,
 )
+from ..query_runtime import QueryRunForbidden, QueryRunNotFound
 from ..security import AuthService, AuthUser
-from ..services.askdata_service import AskDataService
+from ..services.offeragent_service import OfferAgentService
 
 
 router = APIRouter(prefix="/api")
@@ -46,7 +48,7 @@ auth_service = AuthService()
 fake_executor = default_fake_executor(BASE_DIR)
 resume_store = ResumeStore()
 crawl_manager = CrawlRunManager()
-service = AskDataService(crawl_manager=crawl_manager)
+service = OfferAgentService(crawl_manager=crawl_manager)
 market_data_summary = MarketDataSummaryService()
 
 
@@ -380,12 +382,94 @@ async def query(
         user.user_id,
         resume_id=payload.resume_id,
         target=payload.target,
+        task_id=payload.task_id,
+    )
+
+
+@router.get("/query-runs/{task_id}")
+def query_run_snapshot(
+    task_id: str,
+    user: AuthUser = Depends(require_user),
+) -> dict[str, Any]:
+    """返回问答当前阶段，供前端重连或诊断使用。"""
+
+    store = getattr(service, "query_runs", None)
+    if store is None:
+        raise HTTPException(status_code=404, detail="问答进度不可用")
+    try:
+        return store.snapshot(task_id, user.user_id)
+    except QueryRunNotFound as error:
+        raise HTTPException(status_code=404, detail="问答任务不存在") from error
+    except QueryRunForbidden as error:
+        raise HTTPException(status_code=403, detail="无权访问该问答任务") from error
+
+
+@router.get("/query-runs/{task_id}/events")
+async def query_run_events(
+    task_id: str,
+    request: Request,
+    user: AuthUser = Depends(require_user),
+    last_event_id: str | None = Header(default=None, alias="Last-Event-ID"),
+) -> EventSourceResponse:
+    """通过 SSE 推送问答的高层阶段，不暴露模型隐藏思维链。"""
+
+    store = getattr(service, "query_runs", None)
+    if store is None:
+        raise HTTPException(status_code=404, detail="问答进度不可用")
+    try:
+        store.snapshot(task_id, user.user_id)
+    except QueryRunNotFound as error:
+        raise HTTPException(status_code=404, detail="问答任务不存在") from error
+    except QueryRunForbidden as error:
+        raise HTTPException(status_code=403, detail="无权访问该问答任务") from error
+
+    after_sequence = 0
+    if last_event_id:
+        candidate = last_event_id.rsplit(":", 2)[1] if ":" in last_event_id else last_event_id
+        if candidate.isdigit():
+            after_sequence = int(candidate)
+
+    async def stream():
+        nonlocal after_sequence
+        while True:
+            if await request.is_disconnected():
+                return
+            try:
+                events = await asyncio.to_thread(
+                    store.wait_events,
+                    task_id,
+                    user.user_id,
+                    after_sequence,
+                    1.0,
+                )
+                current = store.snapshot(task_id, user.user_id)
+            except (QueryRunNotFound, QueryRunForbidden):
+                return
+            for event in events:
+                after_sequence = event.sequence
+                yield {
+                    "id": event.event_id,
+                    "event": event.event_type,
+                    "data": json.dumps(event.model_dump(by_alias=True, mode="json"), ensure_ascii=False),
+                }
+            if current["status"] in {"completed", "failed", "waiting_clarification"}:
+                # terminal 事件已在本轮发送；没有更多可重放事件时关闭连接。
+                if not events or events[-1].payload.get("status") in {
+                    "completed", "failed", "waiting_clarification"
+                }:
+                    return
+
+    return EventSourceResponse(
+        stream(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+        ping=10,
     )
 
 
 @router.post("/tasks", response_model=TaskSnapshot, status_code=202)
 async def create_task(payload: UserRequest) -> TaskSnapshot:
-    """创建阶段 0 假任务，不调用同步 AskData 或外部服务。"""
+    """创建阶段 0 假任务，不调用同步采集或外部服务。"""
 
     return await fake_executor.create(payload)
 
@@ -470,7 +554,7 @@ def task(
     task_id: str,
     authorization: str | None = Header(default=None, alias="Authorization"),
 ) -> TaskSnapshot | QueryResult:
-    # 阶段 0 假任务不依赖登录，便于直接验证协议；旧版 AskData
+    # 阶段 0 假任务不依赖登录，便于直接验证协议；历史兼容路径
     # 查询任务仍然沿用原有的用户隔离和鉴权规则。
     fake_snapshot = fake_executor.get(task_id)
     if fake_snapshot is not None:

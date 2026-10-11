@@ -23,7 +23,7 @@ class MemoryStore:
         title: str,
         columns: list[str],
         rows: list[dict[str, Any]],
-        user_id: str = "demo_analyst",
+        user_id: str = "demo_candidate",
         column_labels: dict[str, str] | None = None,
     ) -> None:
         memory_id = f"result:{task_id}"
@@ -98,4 +98,4 @@ class MemoryStore:
     @staticmethod
     def _owner(item: dict[str, Any]) -> str:
         # 兼容升级前未记录所属用户的长期记忆。
-        return str(item.get("user_id") or "demo_analyst")
+        return str(item.get("user_id") or "demo_candidate")

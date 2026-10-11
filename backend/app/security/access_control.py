@@ -3,20 +3,15 @@ from __future__ import annotations
 from dataclasses import asdict, dataclass
 from typing import Any
 
-from ..database import SCHEMA
+from ..database import DEFAULT_DATABASE, SCHEMA
 
 
-ALL_DATABASES = frozenset(str(table.get("database") or "askdata_mock") for table in SCHEMA)
+ALL_DATABASES = frozenset(str(table.get("database") or DEFAULT_DATABASE) for table in SCHEMA)
 ALL_TABLES = frozenset(str(table["id"]) for table in SCHEMA)
-ECOMMERCE_TABLES = frozenset(
+JOBS_MARKET_TABLES = frozenset(
     str(table["id"])
     for table in SCHEMA
-    if table.get("database") == "ecommerce_ops"
-)
-ASKDATA_MOCK_TABLES = frozenset(
-    str(table["id"])
-    for table in SCHEMA
-    if table.get("database", "askdata_mock") == "askdata_mock"
+    if table.get("database", DEFAULT_DATABASE) == DEFAULT_DATABASE
 )
 
 
@@ -58,12 +53,11 @@ class AccessScope:
 class AccessController:
     """根据用户角色返回数据库和表权限。"""
 
-    DEFAULT_USER = "demo_analyst"
+    DEFAULT_USER = "demo_candidate"
     USER_ROLES = {
         "local_user": ("local",),
         "demo_admin": ("admin",),
-        "demo_analyst": ("analyst",),
-        "demo_current_sales": ("current_sales",),
+        "demo_candidate": ("candidate",),
     }
     ROLE_POLICIES = {
         "local": {
@@ -74,13 +68,9 @@ class AccessController:
             "databases": ALL_DATABASES,
             "tables": ALL_TABLES,
         },
-        "analyst": {
-            "databases": frozenset({"askdata_mock"}),
-            "tables": ASKDATA_MOCK_TABLES,
-        },
-        "current_sales": {
-            "databases": frozenset({"ecommerce_ops"}),
-            "tables": ECOMMERCE_TABLES,
+        "candidate": {
+            "databases": frozenset({DEFAULT_DATABASE}),
+            "tables": JOBS_MARKET_TABLES,
         },
     }
 
@@ -106,7 +96,7 @@ class AccessController:
             table
             for table in SCHEMA
             if scope.allows_table(
-                str(table.get("database") or "askdata_mock"),
+                str(table.get("database") or DEFAULT_DATABASE),
                 str(table["id"]),
             )
         ]

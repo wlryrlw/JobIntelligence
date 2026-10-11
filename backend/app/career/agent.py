@@ -8,6 +8,7 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from ..contracts import CareerReport, JobProfile, ResumeEvidence, SkillCoverageItem, TargetJobRequest
 from ..model_client import ModelClient
+from ..query_runtime import QueryTimeoutError
 from .profile import JobProfileBuilder
 
 
@@ -163,6 +164,8 @@ class CareerAgent:
                 json.dumps(payload, ensure_ascii=False),
             )
             return CareerAdvice.model_validate(raw)
+        except QueryTimeoutError:
+            raise
         except (RuntimeError, TypeError, ValueError, ValidationError) as exc:
             raise CareerAgentError(f"建议层 structured output 校验失败：{type(exc).__name__}") from exc
 

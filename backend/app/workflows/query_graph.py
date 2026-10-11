@@ -18,12 +18,13 @@ from ..career import (
     ResumeStoreError,
 )
 from ..coordinator import Coordinator
-from ..database import DATABASE_LABELS, SCHEMA
+from ..database import DATABASE_LABELS, DEFAULT_DATABASE, SCHEMA
 from ..errors import PipelineStageError
 from ..mcp_runtime import LocalMcpClient, create_local_mcp_server
 from ..model_client import ModelClient
 from ..models import QueryResult
 from ..preprocessing import RequestPreprocessor
+from ..query_runtime import QueryTimeoutError, emit_progress
 from ..querying.duckdb_engine import DuckDbEngine
 from ..querying.data_qa_agent import DataQaAgent
 from ..querying.models import SqlExecution
@@ -136,6 +137,7 @@ class QueryWorkflow:
         return {"configurable": {"thread_id": task_id}}
 
     def invoke(self, payload: QueryState | Command, task_id: str) -> QueryResult:
+        emit_progress("workflow", "正在协调岗位问答流程")
         state = self.graph.invoke(payload, config=self.run_config(task_id))
         return self._state_result(state, task_id)
 
@@ -162,7 +164,18 @@ class QueryWorkflow:
 
     def _preprocess(self, state: QueryState) -> dict[str, Any]:
         """生成路由、独立查询和 Schema 检索参数。"""
-        decision = self.preprocessor.prepare(state["query"], state.get("route_context", ""))
+        decision = self.preprocessor.prepare(
+            state["query"],
+            state.get("route_context", ""),
+            has_data_context=bool(
+                state.get("recent_result_context") or state.get("analysis_context")
+            ),
+        )
+        emit_progress(
+            "route_selected",
+            f"已选择处理路径：{decision.action}",
+            metadata={"action": decision.action},
+        )
         execution_log = list(state.get("execution_log") or [])
         if decision.source == "model_unavailable_fallback":
             execution_log.append({
@@ -194,6 +207,7 @@ class QueryWorkflow:
 
     def _respond_directly(self, state: QueryState) -> dict[str, Any]:
         """返回预处理模型生成的普通回答或自然语言澄清。"""
+        emit_progress("direct_response", "正在整理 OfferAgent 回复")
         result = ResultBuilder.direct_response(
             state["task_id"],
             state.get("direct_response", ""),
@@ -206,6 +220,7 @@ class QueryWorkflow:
         }
 
     def _answer_qa(self, state: QueryState) -> dict[str, Any]:
+        emit_progress("data_qa", "正在分析已有岗位结果")
         qa_result = self.data_qa_agent.run(
             state["query"],
             {
@@ -241,6 +256,36 @@ class QueryWorkflow:
 
         def on_event(event_type: str, payload: dict[str, Any]) -> None:
             execution_log.append({"stage": event_type, "success": event_type != "query.failed", **payload})
+            messages = {
+                "query.schema_loaded": "已读取岗位数据结构",
+                "query.sql_generated": "已生成只读 SQL",
+                "query.sql_validated": "已完成 SQL 安全校验",
+                "query.sql_executed": "已完成岗位数据查询",
+                "query.sql_repair": "正在修正 SQL 并准备有限重试",
+                "query.completed": "数据库查询完成",
+                "query.failed": "数据库查询失败",
+                "query.clarification": "查询需要补充信息",
+            }
+            stages = {
+                "query.schema_loaded": "schema_catalog",
+                "query.sql_generated": "sql_generation",
+                "query.sql_validated": "sql_validation",
+                "query.sql_executed": "sql_execution",
+                "query.sql_repair": "sql_generation",
+                "query.completed": "completed",
+                "query.failed": "query_failed",
+                "query.clarification": "clarification",
+            }
+            emit_progress(
+                stages.get(event_type, event_type.removeprefix("query.")),
+                messages.get(event_type, "正在执行岗位数据查询"),
+                status="failed" if event_type == "query.failed" else "running",
+                metadata={
+                    key: value
+                    for key, value in payload.items()
+                    if key in {"attempt", "row_count", "attempts", "table_count", "field_count"}
+                },
+            )
 
         extraction = state.get("extraction") or {}
         workspace = state.get("workspace") or {}
@@ -325,6 +370,22 @@ class QueryWorkflow:
                 schema_context,
                 state.get("analysis_context", ""),
             )
+        except QueryTimeoutError as exc:
+            execution_log.append({
+                "stage": exc.stage,
+                "success": False,
+                "error_code": "timeout",
+                "elapsed_ms": exc.elapsed_ms,
+            })
+            final = {
+                "valid": True,
+                "reason": "结果说明阶段超时",
+                "title": "查询结果（说明生成超时）",
+                "analysis": (
+                    f"SQL已成功执行，但结果说明在“{exc.stage}”阶段超时；"
+                    f"已用时 {exc.elapsed_ms / 1000:.1f} 秒，下面展示原始查询结果。"
+                ),
+            }
         except PipelineStageError as exc:
             execution_log.append({"stage": exc.stage, "success": False, "error": exc.message})
             final = {
@@ -350,6 +411,7 @@ class QueryWorkflow:
         }
 
     def _coordinate_career(self, state: QueryState) -> dict[str, Any]:
+        emit_progress("career_resource_gate", "正在检查简历、目标岗位和岗位数据资源")
         request = UserRequest(
             task_id=state["task_id"],
             session_id=state.get("session_id") or "default-session",
@@ -395,11 +457,14 @@ class QueryWorkflow:
         user_id = str((state.get("access_scope") or {}).get("user_id") or "anonymous")
         resume_id = str(state.get("resume_id") or "")
         try:
+            emit_progress("career_resume", "正在读取本地结构化简历证据")
             resume = self.resume_store.load(resume_id, user_id=user_id)
             target = decision.target
             if target is None:
                 raise CareerAgentError("Coordinator 未返回有效目标岗位")
+            emit_progress("career_profile", "正在构建目标岗位画像")
             profile = self.career_agent.build_profile(target)
+            emit_progress("career_analysis", "正在生成证据约束的求职分析")
             report = self.career_agent.analyze(resume, profile)
         except ResumeNotFound:
             clarification = {
@@ -419,6 +484,8 @@ class QueryWorkflow:
                 "clarification": clarification,
                 "result": ResultBuilder.waiting(waiting_state).model_dump(mode="json"),
             }
+        except QueryTimeoutError:
+            raise
         except (ResumeStoreError, CareerAgentError, JobProfileError, ValueError) as exc:
             execution_log = [
                 resource_log,
@@ -497,7 +564,7 @@ class QueryWorkflow:
         database_tables = frozenset(
             table["id"]
             for table in SCHEMA
-            if str(table.get("database") or "askdata_mock") == confirmed_database
+            if str(table.get("database") or DEFAULT_DATABASE) == confirmed_database
         )
         if not database_tables:
             return scope
@@ -535,7 +602,7 @@ class QueryWorkflow:
         )
         retrieval["schema_graph"] = schema_graph
         databases = sorted({
-            str(table.get("database") or schema_graph.get("database") or "askdata_mock")
+            str(table.get("database") or schema_graph.get("database") or DEFAULT_DATABASE)
             for table in schema_graph.get("tables", [])
         })
         return {
@@ -568,7 +635,7 @@ class QueryWorkflow:
             database_tables = {
                 table["id"]
                 for table in SCHEMA
-                if str(table.get("database") or "askdata_mock") == option_id
+                if str(table.get("database") or DEFAULT_DATABASE) == option_id
             }
             tables = [table for table in tables if table in database_tables]
         workspace["confirmed_schema_tables"] = tables
@@ -585,7 +652,7 @@ class QueryWorkflow:
             table_count = sum(
                 1
                 for table in SCHEMA
-                if str(table.get("database") or "askdata_mock") == database
+                if str(table.get("database") or DEFAULT_DATABASE) == database
             )
             options.append({
                 "id": database,

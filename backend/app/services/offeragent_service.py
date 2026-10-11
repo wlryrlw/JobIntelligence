@@ -15,6 +15,13 @@ from ..model_client import ModelClient
 from ..models import QueryResult
 from ..models import Clarification, ClarificationOption
 from ..querying import QueryAgent, SchemaCatalogBuilder
+from ..query_runtime import (
+    ProgressSink,
+    QueryRunStore,
+    QueryTimeoutError,
+    current_query_runtime,
+    query_runtime,
+)
 from ..querying.column_labels import column_labels
 from ..retrieval import SchemaIndex
 from ..security import AccessController
@@ -23,7 +30,7 @@ from .memory_store import MemoryStore
 from .session_context import SessionContext
 
 
-class AskDataService:
+class OfferAgentService:
     """查询服务入口，负责会话管理和工作流调用。"""
 
     def __init__(
@@ -42,6 +49,7 @@ class AskDataService:
         self.schema_catalog = SchemaCatalogBuilder()
         self.query_agent = QueryAgent(self.model_client, catalog_builder=self.schema_catalog)
         self.crawl_manager = crawl_manager or CrawlRunManager()
+        self.query_runs = QueryRunStore()
         self.tasks = self.context.tasks
         self.session_tasks = self.context.session_tasks
 
@@ -54,38 +62,73 @@ class AskDataService:
         *,
         resume_id: str | None = None,
         target: TargetJobRequest | None = None,
+        task_id: str | None = None,
     ) -> QueryResult:
         """异步 API 入口：采集副作用只创建任务，普通查询放到受控线程边界。"""
 
         normalized = query.strip()
         access_scope = self.access_controller.resolve(user_id)
+        run_task_id = task_id or uuid.uuid4().hex[:12]
+        self.query_runs.start(run_task_id, access_scope.user_id)
+        result: QueryResult | None = None
         scoped_session_id = f"{access_scope.user_id}:{session_id}"
-        pending = self.context.latest_pending(scoped_session_id)
-        if pending and pending.get("user_id") == access_scope.user_id:
-            option_id = self.context.match_clarification(normalized, pending["result"])
-            if option_id in {"start_crawl", "cancel_crawl"}:
-                return await self._resolve_crawl_confirmation(
-                    pending,
-                    option_id,
-                    user_message=normalized,
-                    user_id=access_scope.user_id,
+        try:
+            pending = self.context.latest_pending(scoped_session_id)
+            if pending and pending.get("user_id") == access_scope.user_id:
+                option_id = self.context.match_clarification(normalized, pending["result"])
+                if option_id in {"start_crawl", "cancel_crawl"}:
+                    result = await self._resolve_crawl_confirmation(
+                        pending,
+                        option_id,
+                        user_message=normalized,
+                        user_id=access_scope.user_id,
+                    )
+            if result is None and parse_crawl_intent(normalized):
+                result = self._prepare_crawl_confirmation(
+                    normalized,
+                    session_id,
+                    workspace,
+                    access_scope.user_id,
+                    task_id=run_task_id,
                 )
-        if parse_crawl_intent(normalized):
-            return self._prepare_crawl_confirmation(
-                normalized,
-                session_id,
-                workspace,
-                access_scope.user_id,
+            if result is None:
+                sink: ProgressSink = lambda stage, message, status, metadata: self.query_runs.publish(
+                    run_task_id, stage, message, status, metadata
+                )
+                with query_runtime(
+                    run_task_id,
+                    self.config.query_timeout_seconds,
+                    progress_sink=sink,
+                ):
+                    result = await asyncio.wait_for(
+                        asyncio.to_thread(
+                            self.submit,
+                            normalized,
+                            session_id,
+                            workspace,
+                            access_scope.user_id,
+                            resume_id=resume_id,
+                            target=target,
+                            task_id=run_task_id,
+                        ),
+                        timeout=max(1.0, self.config.query_timeout_seconds + 2),
+                    )
+        except asyncio.TimeoutError:
+            result = self._timeout_result(
+                run_task_id,
+                QueryTimeoutError(
+                    "query_timeout",
+                    "问答任务超过总时间预算",
+                    elapsed_ms=int(self.config.query_timeout_seconds * 1000),
+                    timeout_seconds=self.config.query_timeout_seconds,
+                ),
             )
-        return await asyncio.to_thread(
-            self.submit,
-            normalized,
-            session_id,
-            workspace,
-            access_scope.user_id,
-            resume_id=resume_id,
-            target=target,
-        )
+        finally:
+            if result is not None:
+                self.query_runs.finish(run_task_id, result)
+        if result is None:
+            raise RuntimeError("问答任务未返回结果")
+        return result
 
     def _prepare_crawl_confirmation(
         self,
@@ -93,11 +136,13 @@ class AskDataService:
         session_id: str,
         workspace: dict[str, Any] | None,
         user_id: str,
+        *,
+        task_id: str | None = None,
     ) -> QueryResult:
         draft = parse_crawl_intent(query)
         if draft is None:
             raise ValueError("无法识别采集请求")
-        task_id = uuid.uuid4().hex[:12]
+        task_id = task_id or uuid.uuid4().hex[:12]
         scoped_session_id = f"{user_id}:{session_id}"
         resolved_workspace = self.context.normalize_workspace(workspace)
         missing = []
@@ -194,6 +239,67 @@ class AskDataService:
         *,
         resume_id: str | None = None,
         target: TargetJobRequest | None = None,
+        task_id: str | None = None,
+        event_sink: ProgressSink | None = None,
+    ) -> QueryResult:
+        task_id = task_id or uuid.uuid4().hex[:12]
+        try:
+            runtime = current_query_runtime()
+            if runtime is None:
+                with query_runtime(
+                    task_id,
+                    self.config.query_timeout_seconds,
+                    progress_sink=event_sink,
+                ):
+                    return self._submit_inner(
+                        query,
+                        session_id,
+                        workspace,
+                        user_id,
+                        resume_id=resume_id,
+                        target=target,
+                        task_id=task_id,
+                    )
+            return self._submit_inner(
+                query,
+                session_id,
+                workspace,
+                user_id,
+                resume_id=resume_id,
+                target=target,
+                task_id=task_id,
+            )
+        except QueryTimeoutError as exc:
+            result = self._timeout_result(task_id, exc)
+            access_scope = self.access_controller.resolve(user_id)
+            scoped_session_id = f"{access_scope.user_id}:{session_id}"
+            resolved_workspace = self.context.normalize_workspace(workspace)
+            self.context.remember(
+                scoped_session_id,
+                result,
+                query.strip(),
+                resolved_workspace,
+                access_scope.user_id,
+            )
+            self.context.archive.save_message(
+                scoped_session_id,
+                "assistant",
+                result.analysis or result.message,
+                task_id=task_id,
+                metadata={"route": result.route, "status": result.status},
+            )
+            return result
+
+    def _submit_inner(
+        self,
+        query: str,
+        session_id: str,
+        workspace: dict[str, Any] | None = None,
+        user_id: str | None = None,
+        *,
+        resume_id: str | None = None,
+        target: TargetJobRequest | None = None,
+        task_id: str,
     ) -> QueryResult:
         normalized = query.strip()
         access_scope = self.access_controller.resolve(user_id)
@@ -209,7 +315,6 @@ class AskDataService:
                     user_id=access_scope.user_id,
                 )
 
-        task_id = uuid.uuid4().hex[:12]
         resolved_workspace = self.context.normalize_workspace(workspace)
         self.context.archive.save_message(
             scoped_session_id,
@@ -231,6 +336,7 @@ class AskDataService:
                 task_id,
             )
         except PipelineStageError as exc:
+            runtime = current_query_runtime()
             result = QueryResult(
                 task_id=task_id,
                 status="failed",
@@ -241,6 +347,8 @@ class AskDataService:
                 steps=[f"{exc.stage}失败，流程已停止"],
                 execution_log=[{"stage": exc.stage, "success": False, "error": exc.message}],
                 workflow_mode="failed_explicitly",
+                elapsed_ms=runtime.elapsed_ms if runtime else None,
+                failure_stage=exc.stage,
             )
         self.context.remember(
             scoped_session_id,
@@ -258,7 +366,87 @@ class AskDataService:
         )
         return result
 
+    def _timeout_result(self, task_id: str, error: QueryTimeoutError) -> QueryResult:
+        stage_labels = {
+            "request_preprocessing": "请求理解与路由",
+            "schema_catalog": "岗位数据结构读取",
+            "sql_generation": "只读 SQL 生成",
+            "sql_validation": "SQL 安全校验",
+            "sql_execution": "岗位数据查询执行",
+            "data_qa": "已有结果分析",
+            "result_analysis": "查询结果整理",
+            "career_profile": "目标岗位画像",
+            "career_analysis": "求职分析",
+            "llm_call": "模型调用",
+            "query_timeout": "问答总流程",
+        }
+        label = stage_labels.get(error.stage, error.stage)
+        elapsed = error.elapsed_ms
+        route = (
+            "data_qa"
+            if error.stage in {"data_qa", "qa_answer"}
+            else "career_advice"
+            if error.stage.startswith("career")
+            else "database_query"
+        )
+        return QueryResult(
+            task_id=task_id,
+            status="failed",
+            route=route,
+            message="本次问答超时，已停止继续等待。",
+            analysis=(
+                f"已用时 {elapsed / 1000:.1f} 秒，在“{label}”阶段超时。"
+                "请稍后重试；如果持续发生，请检查模型接口响应时间和配置。"
+            ),
+            steps=["开始问答", f"{label}超时", "停止后续调用"],
+            execution_log=[{
+                "stage": error.stage,
+                "success": False,
+                "error_code": "timeout",
+                "elapsed_ms": elapsed,
+                "timeout_seconds": error.timeout_seconds,
+            }],
+            workflow_mode="timeout",
+            elapsed_ms=elapsed,
+            error_code="timeout",
+            failure_stage=error.stage,
+        )
+
     def clarify(
+        self,
+        task_id: str,
+        option_id: str,
+        user_message: str | None = None,
+        user_id: str | None = None,
+    ) -> QueryResult:
+        try:
+            runtime = current_query_runtime()
+            if runtime is None:
+                with query_runtime(task_id, self.config.query_timeout_seconds):
+                    return self._clarify_inner(task_id, option_id, user_message, user_id)
+            return self._clarify_inner(task_id, option_id, user_message, user_id)
+        except QueryTimeoutError as exc:
+            result = self._timeout_result(task_id, exc)
+            task = self.tasks.get(task_id)
+            if task is not None:
+                access_scope = self.access_controller.resolve(user_id)
+                self.context.remember(
+                    task["session_id"],
+                    result,
+                    task["query"],
+                    task["workspace"],
+                    access_scope.user_id,
+                )
+                self.context.archive.save_message(
+                    task["session_id"],
+                    "assistant",
+                    result.analysis or result.message,
+                    task_id=task_id,
+                    metadata={"route": result.route, "status": result.status},
+                )
+            return result
+
+    def _clarify_inner(
         self,
         task_id: str,
         option_id: str,

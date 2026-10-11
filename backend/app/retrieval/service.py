@@ -6,25 +6,29 @@ from pathlib import Path
 from typing import Any
 
 from ..config import BASE_DIR, Settings, settings
-from ..database import RELATIONS, SCHEMA, physical_table_name
+from ..database import DEFAULT_DATABASE, RELATIONS, SCHEMA, physical_table_name
 from ..errors import PipelineStageError
 from ..model_client import ModelClient
+from ..query_runtime import QueryTimeoutError
 from ..querying.duckdb_engine import DuckDbEngine
 from ..security import AccessScope
 from .store import FieldDocument, LocalSchemaStore
 
 
 SYNONYMS = {
-    "paid_amount": ["销售额", "成交额", "收入", "实收", "实付"],
-    "target_amount": ["销售目标", "目标额", "业绩目标"],
-    "order_id": ["订单数", "笔数", "订单量"],
-    "region": ["地区", "区域", "大区"],
-    "category": ["品类", "类别", "产品类型"],
-    "order_date": ["时间", "日期", "下单时间"],
-    "status": ["状态", "支付状态", "退款", "取消"],
-    "customer_name": ["客户", "客户名称", "企业名称"],
-    "customer_level": ["客户等级", "客户层级", "客户级别"],
-    "product_name": ["产品", "商品", "产品名称"],
+    "job_id": ["岗位编号", "职位编号", "岗位数量", "职位数量"],
+    "title": ["岗位", "职位", "职位名称"],
+    "company": ["公司", "企业", "雇主"],
+    "city": ["城市", "工作城市", "地点"],
+    "district": ["区县", "区域"],
+    "salary_min_k": ["最低薪资", "薪资下限", "月薪下限"],
+    "salary_max_k": ["最高薪资", "薪资上限", "月薪上限"],
+    "skills": ["技能", "技术栈", "能力要求"],
+    "degree": ["学历", "教育背景"],
+    "experience": ["经验", "工作年限"],
+    "company_industry": ["行业", "公司行业"],
+    "company_scale": ["公司规模", "企业规模"],
+    "latest_scraped_at": ["采集时间", "更新时间"],
 }
 
 
@@ -64,6 +68,8 @@ class SchemaIndex:
             vectors = self.model_client.embed(semantic_texts)
             self.embedding_source = self.config.embedding_model
             self.last_build_error = None
+        except QueryTimeoutError:
+            raise
         except (RuntimeError, KeyError, TypeError, ValueError) as exc:
             self.last_build_error = str(exc)
             raise PipelineStageError("schema_embedding", str(exc)) from exc
@@ -163,6 +169,8 @@ class SchemaIndex:
             }
             if not rerank_scores:
                 raise RuntimeError("Rerank返回为空")
+        except QueryTimeoutError:
+            raise
         except (RuntimeError, KeyError, TypeError, ValueError) as exc:
             raise PipelineStageError("schema_rerank", str(exc)) from exc
 
@@ -293,12 +301,12 @@ class SchemaIndex:
 
     def _build_raw_documents(self) -> list[dict[str, Any]]:
         output: list[dict[str, Any]] = []
-        database_names = sorted({table.get("database", "askdata_mock") for table in SCHEMA})
+        database_names = sorted({table.get("database", DEFAULT_DATABASE) for table in SCHEMA})
         for database in database_names:
             tables = [
                 item
                 for item in SCHEMA
-                if item.get("database", "askdata_mock") == database
+                if item.get("database", DEFAULT_DATABASE) == database
             ]
             prebuilt = [
                 table
@@ -346,7 +354,7 @@ class SchemaIndex:
                 and field["name"] in {item["left_field"], item["right_field"]}
             ]
             default_keyword_text = " ".join([
-                table.get("database", "askdata_mock"), table.get("domain", ""),
+                table.get("database", DEFAULT_DATABASE), table.get("domain", ""),
                 table["id"], sql_table_name, table["label"], *table.get("business_terms", []),
                 field["name"], field["label"], field.get("description", ""),
                 *aliases, samples_text,
@@ -369,7 +377,7 @@ class SchemaIndex:
             rerank_text = str(index_content.get("rerank_text") or default_rerank_text)
             output.append({
                 "doc_id": f"{table['id']}.{field['name']}",
-                "database_id": table.get("database", "askdata_mock"),
+                "database_id": table.get("database", DEFAULT_DATABASE),
                 "table_id": table["id"],
                 "table_label": table["label"],
                 "field_name": field["name"],
@@ -419,6 +427,8 @@ class SchemaIndex:
     def _query_vector(self, text: str) -> list[float]:
         try:
             return self.model_client.embed([text])[0]
+        except QueryTimeoutError:
+            raise
         except (RuntimeError, KeyError, TypeError, ValueError) as exc:
             raise PipelineStageError("query_embedding", str(exc)) from exc
 

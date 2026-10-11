@@ -11,6 +11,7 @@ import type {
   AuthUser,
   CareerReport,
   CellValueMap,
+  QueryProgressEvent,
   QueryResult,
   ReportDataSource,
   ResumeUploadResponse,
@@ -58,6 +59,7 @@ const prompts = [
 const input = ref("")
 const loading = ref(false)
 const pendingQuery = ref("")
+const progress = ref({ stage: "started", message: "正在准备问答", elapsedMs: 0 })
 const error = ref("")
 const savedActionError = ref("")
 const savedActionMessage = ref("")
@@ -160,7 +162,7 @@ const historyGroups = computed(() => {
 const userRoleLabel = computed(() => {
   if (authUser.value?.role === "local") return "本地岗位市场"
   if (authUser.value?.role === "admin") return "岗位市场管理员"
-  if (authUser.value?.role === "analyst") return "演示岗位数据"
+  if (authUser.value?.role === "candidate") return "求职分析工作区"
   return "岗位研究工作区"
 })
 
@@ -199,7 +201,7 @@ function restoreResume() {
   }
 }
 
-function useMockAccount(username: string, password: string) {
+function useDemoAccount(username: string, password: string) {
   loginUsername.value = username
   loginPassword.value = password
   error.value = ""
@@ -305,8 +307,23 @@ async function submit(text?: string) {
   if (!activeConversation.value) createConversation()
   loading.value = true
   pendingQuery.value = query
+  progress.value = { stage: "started", message: "正在准备问答", elapsedMs: 0 }
   error.value = ""
   input.value = ""
+  const taskId = crypto.randomUUID()
+  const progressController = new AbortController()
+  const progressPromise = api.streamQueryEvents(
+    taskId,
+    (event: QueryProgressEvent) => {
+      const payload = event.payload
+      progress.value = {
+        stage: payload.stage || event.event_type,
+        message: payload.message || "正在处理问题",
+        elapsedMs: typeof payload.elapsed_ms === "number" ? payload.elapsed_ms : progress.value.elapsedMs,
+      }
+    },
+    progressController.signal,
+  ).catch(() => undefined)
   try {
     const requestWorkspace: WorkspaceConfig = {
       ...workspace.value,
@@ -319,17 +336,50 @@ async function submit(text?: string) {
         rows: table.rows.slice(0, 50),
       })),
     }
-    const result = await api.query(query, requestWorkspace, activeConversation.value?.id ?? "studio-demo")
+    const result = await api.query(query, requestWorkspace, activeConversation.value?.id ?? "studio-demo", undefined, taskId)
     activeConversation.value?.turns.push({ query, result })
     saveActiveConversation()
   } catch (caught) {
     error.value = caught instanceof Error ? caught.message : "查询失败"
     input.value = query
   } finally {
+    progressController.abort()
+    // 进度 SSE 只是旁路观测，不能阻塞最终 QueryResult 的展示。
     loading.value = false
     pendingQuery.value = ""
     nextTick(() => conversationScroll.value?.scrollTo({ top: conversationScroll.value.scrollHeight, behavior: "smooth" }))
   }
+}
+
+function progressStageLabel(stage: string) {
+  const labels: Record<string, string> = {
+    started: "启动",
+    workflow: "流程协调",
+    request_preprocessing: "请求理解与路由",
+    route_selected: "处理路径已选择",
+    schema_catalog: "读取岗位数据结构",
+    sql_generation: "生成只读 SQL",
+    sql_validation: "校验 SQL 安全性",
+    sql_execution: "执行岗位数据查询",
+    data_qa: "分析已有岗位结果",
+    result_analysis: "整理查询结果",
+    direct_response: "整理回复",
+    career_resource_gate: "检查求职分析资源",
+    career_resume: "读取简历证据",
+    career_profile: "构建岗位画像",
+    career_analysis: "生成求职分析",
+    completed: "已完成",
+    query_failed: "查询失败",
+    clarification: "等待补充信息",
+    timeout: "已超时",
+  }
+  return labels[stage] || stage
+}
+
+function hasRetrievalDetails(
+  retrieval: QueryResult["retrieval"],
+): retrieval is NonNullable<QueryResult["retrieval"]> {
+  return Boolean(retrieval && typeof retrieval.threshold === "number")
 }
 
 async function saveResult(result: QueryResult) {
@@ -564,7 +614,7 @@ function downloadCareerReport() {
         <label><span>密码</span><input v-model="loginPassword" type="password" autocomplete="current-password" placeholder="请输入密码"></label>
         <p v-if="error" class="login-error">{{ error }}</p>
         <button class="login-submit" :disabled="loginLoading" type="submit">{{ loginLoading ? "正在登录…" : "登录" }}</button>
-        <div class="mock-accounts"><p>演示账号</p><button type="button" @click="useMockAccount('admin', 'admin123')"><span class="account-icon admin">管</span><span><strong>admin</strong><small>管理员 · 全部数据</small></span><code>admin123</code></button><button type="button" @click="useMockAccount('sales', 'sales123')"><span class="account-icon user">研</span><span><strong>sales</strong><small>岗位研究 · jobs_market</small></span><code>sales123</code></button><button type="button" @click="useMockAccount('mock', 'mock123')"><span class="account-icon mock">示</span><span><strong>mock</strong><small>演示岗位数据 · jobs_market</small></span><code>mock123</code></button></div>
+        <div class="demo-accounts"><p>演示账号</p><button type="button" @click="useDemoAccount('admin', 'admin123')"><span class="account-icon admin">管</span><span><strong>admin</strong><small>管理员 · 全部岗位数据</small></span><code>admin123</code></button><button type="button" @click="useDemoAccount('candidate', 'candidate123')"><span class="account-icon candidate">求</span><span><strong>candidate</strong><small>求职分析 · jobs_market</small></span><code>candidate123</code></button></div>
         <small class="login-note">本地演示账号仅用于开发和评测，不适合生产环境。</small>
       </form>
     </section>
@@ -592,7 +642,8 @@ function downloadCareerReport() {
               <div class="answer-heading" :class="{ 'qa-heading': turn.result.route !== 'database_query' }"><div><small>OfferAgent</small><strong v-if="turn.result.route === 'database_query'">{{ turn.result.status === "failed" ? "处理失败" : turn.result.status === "waiting_clarification" ? "需要补充信息" : "岗位查询完成" }}</strong><strong v-else>{{ turn.result.route === "career_advice" ? "简历与岗位分析" : turn.result.route === "market_data_refresh" ? (turn.result.status === "waiting_clarification" ? "采集前确认" : "采集任务已创建") : turn.result.route === "direct_response" ? "OfferAgent 回复" : "岗位分析完成" }}</strong></div><span v-if="turn.result.route === 'database_query' && turn.result.status === 'completed'">{{ turn.result.workflow_mode === "query_agent" ? "QueryAgent" : "多库流程" }}</span></div>
               <ClarificationPanel v-if="turn.result.status === 'waiting_clarification'" :clarification="turn.result.clarification" @choose="submit" />
               <ExecutionTimeline :steps="turn.result.steps" :attempts="turn.result.attempts" :status="turn.result.status" />
-              <details v-if="turn.result.retrieval && turn.result.status !== 'waiting_clarification'" class="execution-details"><summary>查看检索过程</summary><div class="execution-strip"><span>BM25 {{ turn.result.retrieval.bm25_count }} · Dense {{ turn.result.retrieval.dense_count }}</span><span>RRF {{ turn.result.retrieval.rrf_count }} → Rerank {{ turn.result.retrieval.selected_count }} 字段</span><span>阈值 ≥ {{ turn.result.retrieval.threshold.toFixed(2) }}</span></div></details>
+              <div v-if="turn.result.error_code === 'timeout'" class="timeout-notice">本次问答耗时 {{ ((turn.result.elapsed_ms || 0) / 1000).toFixed(1) }} 秒，在“{{ progressStageLabel(turn.result.failure_stage || 'timeout') }}”阶段超时，已停止继续等待。</div>
+              <details v-if="hasRetrievalDetails(turn.result.retrieval) && turn.result.status !== 'waiting_clarification'" class="execution-details"><summary>查看检索过程</summary><div class="execution-strip"><span>BM25 {{ turn.result.retrieval.bm25_count }} · Dense {{ turn.result.retrieval.dense_count }}</span><span>RRF {{ turn.result.retrieval.rrf_count }} → Rerank {{ turn.result.retrieval.selected_count }} 字段</span><span>阈值 ≥ {{ turn.result.retrieval.threshold.toFixed(2) }}</span></div></details>
               <div v-if="turn.result.analysis_sources?.length" class="analysis-source-strip"><strong>综合分析来源</strong><span v-for="source in turn.result.analysis_sources" :key="source.task_id">▦ {{ source.title }} · {{ source.row_count }} 行</span></div>
               <div v-if="turn.result.interpretation" class="scope-card"><div class="scope-head"><strong>本次查询口径</strong><span>✓ 已确认</span></div><div class="scope-grid"><div><small>数据表</small><strong>{{ turn.result.interpretation.table }}</strong></div><div><small>指标</small><strong>{{ turn.result.interpretation.metric }}</strong></div><div><small>维度</small><strong>{{ turn.result.interpretation.dimension }}</strong></div><div><small>时间</small><strong>{{ turn.result.interpretation.time_range }}</strong></div></div></div>
               <ReportCard v-if="turn.result.report" :report="turn.result.report" :sources="reportDataSources" />
@@ -602,11 +653,11 @@ function downloadCareerReport() {
                 <template #actions><button class="result-action" @click="expandedSql = expandedSql === turn.result.task_id ? null : turn.result.task_id">{{ expandedSql === turn.result.task_id ? "收起 SQL" : "查看 SQL" }}</button><button class="result-action" :class="{ saved: turn.result.saved }" @click="saveResult(turn.result)">{{ turn.result.saved ? "已保存" : "保存结果" }}</button></template>
                 <template #details><div v-if="expandedSql === turn.result.task_id && turn.result.sql" class="result-card"><pre>{{ turn.result.sql }}</pre></div></template>
               </ResultTableCard>
-              <div v-if="turn.result.route === 'database_query' && turn.result.analysis && turn.result.status !== 'waiting_clarification'" class="result-analysis"><strong>结果解读</strong><p>{{ turn.result.analysis }}</p></div>
+              <div v-if="turn.result.route === 'database_query' && turn.result.status !== 'waiting_clarification' && (turn.result.analysis || turn.result.message)" class="result-analysis" :class="{ 'empty-result': !turn.result.rows.length && !turn.result.analysis }"><strong>{{ turn.result.analysis ? "结果解读" : "查询结果" }}</strong><p>{{ turn.result.analysis || turn.result.message || "查询已完成，但没有返回可展示的数据。" }}</p></div>
             </div></div>
           </article>
           <div v-if="loading && pendingQuery" class="user-message pending-user-message"><div class="message-avatar user">你</div><div class="message-body"><small>你</small><p>{{ pendingQuery }}</p></div></div>
-          <div v-if="loading" class="assistant-message loading-message"><div class="message-avatar assistant">O</div><div class="loading-copy"><strong>正在分析岗位数据…</strong><small>正在检索字段、生成只读 SQL 并校验结果</small></div></div>
+          <div v-if="loading" class="assistant-message loading-message"><div class="message-avatar assistant">O</div><div class="loading-copy"><strong>{{ progress.message }}</strong><small>{{ progressStageLabel(progress.stage) }} · 已用时 {{ (progress.elapsedMs / 1000).toFixed(1) }} 秒</small></div></div>
         </div>
       </div></Transition></section>
       <div v-if="error" class="error-banner">{{ error }}</div>

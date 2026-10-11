@@ -13,7 +13,7 @@ from sqlglot import exp
 from sqlglot.errors import ParseError
 
 from ..config import BASE_DIR
-from ..database import SCHEMA, physical_table_name
+from ..database import DEFAULT_DATABASE, SCHEMA, physical_table_name
 from ..etl.schema import csv_expression, load_market_schema
 from ..security import AccessScope
 from .models import SqlExecution
@@ -31,7 +31,6 @@ class DuckDbEngine:
 
     def __init__(self, database_root: Path | None = None) -> None:
         self.database_root = database_root or DATABASE_ROOT
-        self.legacy_root = BASE_DIR / "data" / "databases" if database_root is None else None
 
     def execute(
         self,
@@ -133,7 +132,7 @@ class DuckDbEngine:
         database_tables = [
             table
             for table in SCHEMA
-            if table.get("database", "askdata_mock") == database
+            if table.get("database", DEFAULT_DATABASE) == database
         ]
         allowed = {
             physical_table_name(table): table["id"]
@@ -164,11 +163,8 @@ class DuckDbEngine:
     def _database_folder(self, database: str) -> Path:
         if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", database):
             raise ValueError("数据库名称不合法")
-        selected_root = self.database_root
-        if database != "jobs_market" and self.legacy_root and not (selected_root / database).exists():
-            selected_root = self.legacy_root
-        folder = (selected_root / database).resolve()
-        root = selected_root.resolve()
+        folder = (self.database_root / database).resolve()
+        root = self.database_root.resolve()
         if root not in folder.parents or not folder.is_dir():
             raise ValueError(f"本地CSV数据库不存在：{database}")
         return folder

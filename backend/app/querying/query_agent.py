@@ -18,6 +18,7 @@ from ..contracts import (
     SqlValidation,
 )
 from ..model_client import ModelClient
+from ..query_runtime import QueryTimeoutError, emit_progress
 from ..security import AccessScope
 from .duckdb_engine import DuckDbEngine
 from .schema_catalog import SchemaCatalogBuilder
@@ -67,6 +68,7 @@ class QueryAgent:
         attempts: list[SqlAttempt] = []
         catalog: SchemaCatalog | None = None
         try:
+            emit_progress("schema_catalog", "正在读取岗位数据结构")
             catalog = self.catalog_builder.build(selected_database, access_scope)
             self._emit(
                 event_sink,
@@ -87,7 +89,14 @@ class QueryAgent:
         previous: dict[str, Any] | None = None
         for attempt_number in range(1, self.max_attempts + 1):
             try:
+                emit_progress(
+                    "sql_generation",
+                    f"正在生成只读 SQL（第 {attempt_number} 次）",
+                    metadata={"attempt": attempt_number},
+                )
                 generated = self._generate(query_plan, catalog, previous)
+            except QueryTimeoutError:
+                raise
             except (RuntimeError, ValueError, TypeError, KeyError) as exc:
                 kind = SqlErrorKind.MODEL_UNAVAILABLE if isinstance(exc, RuntimeError) else SqlErrorKind.UNKNOWN
                 message = bounded_error(exc)
@@ -130,6 +139,11 @@ class QueryAgent:
                 },
             )
             try:
+                emit_progress(
+                    "sql_validation",
+                    f"正在校验 SQL 安全性（第 {attempt_number} 次）",
+                    metadata={"attempt": attempt_number},
+                )
                 safe_sql = self.engine.validate_sql(selected_database, sql, self._scope(access_scope))
             except Exception as exc:
                 kind, retryable = classify_sql_error(exc)
@@ -168,6 +182,11 @@ class QueryAgent:
             )
             execution = self.engine.execute(
                 selected_database, safe_sql, self._scope(access_scope)
+            )
+            emit_progress(
+                "sql_execution",
+                f"正在执行岗位数据查询（第 {attempt_number} 次）",
+                metadata={"attempt": attempt_number},
             )
             if execution.success:
                 record = SqlAttempt(

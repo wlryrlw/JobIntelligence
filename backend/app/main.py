@@ -6,15 +6,10 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from .api.routes import crawl_manager, router
-from .config import BASE_DIR
-from .demo_data import seed_demo_data
 
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
-    database_dir = BASE_DIR / "data" / "databases" / "askdata_mock"
-    if not database_dir.exists() or not any(database_dir.glob("*.csv")):
-        seed_demo_data(database_dir=database_dir)
     try:
         yield
     finally:
@@ -22,9 +17,9 @@ async def lifespan(_: FastAPI):
 
 
 app = FastAPI(
-    title="AskData Studio API",
+    title="OfferAgent API",
     version="0.2.0",
-    description="基于LangGraph、支持Human-in-the-loop的轻量Text-to-SQL服务",
+    description="OfferAgent 求职决策系统 API，支持岗位市场查询、求职分析和 Human-in-the-loop 工作流",
     lifespan=lifespan,
 )
 app.add_middleware(

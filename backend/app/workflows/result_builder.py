@@ -7,6 +7,7 @@ from ..models import Clarification, Interpretation, QueryResult
 from ..querying.models import SqlExecution
 from ..querying.data_qa_agent import DataQaResult
 from ..querying.column_labels import column_labels
+from ..query_runtime import current_query_runtime
 
 
 class ResultBuilder:
@@ -19,6 +20,7 @@ class ResultBuilder:
         intent: dict[str, Any],
         analysis_sources: list[dict[str, Any]],
     ) -> QueryResult:
+        runtime = current_query_runtime()
         return QueryResult(
             task_id=task_id,
             status="completed",
@@ -38,6 +40,7 @@ class ResultBuilder:
             workflow_mode="qa_report" if generated.report else "qa",
             report=generated.report,
             report_tool_calls=generated.tool_calls,
+            elapsed_ms=runtime.elapsed_ms if runtime else None,
         )
 
     @staticmethod
@@ -47,6 +50,7 @@ class ResultBuilder:
         intent: dict[str, Any],
         execution_log: list[dict[str, Any]],
     ) -> QueryResult:
+        runtime = current_query_runtime()
         response_type = str(intent.get("response_type") or "answer")
         fallback_used = intent.get("source") == "model_unavailable_fallback"
         return QueryResult(
@@ -61,10 +65,12 @@ class ResultBuilder:
             steps=["识别请求类型", "生成 OfferAgent 回答"],
             execution_log=execution_log,
             workflow_mode="route_fallback" if fallback_used else "direct_response",
+            elapsed_ms=runtime.elapsed_ms if runtime else None,
         )
 
     @staticmethod
     def waiting(state: dict[str, Any]) -> QueryResult:
+        runtime = current_query_runtime()
         payload = state.get("clarification") or {}
         clarification = Clarification(
             parameter=str(payload.get("parameter") or "other"),
@@ -94,6 +100,7 @@ class ResultBuilder:
                 else ["一次请求预处理：路由并提取检索词", "召回字段并构建Schema图", "LangGraph暂停并等待用户回复"]
             ),
             workflow_mode=str(state.get("workflow_mode") or "langgraph_hitl"),
+            elapsed_ms=runtime.elapsed_ms if runtime else None,
         )
 
     @staticmethod
@@ -106,6 +113,11 @@ class ResultBuilder:
         execution_log: list[dict[str, Any]],
     ) -> QueryResult:
         graph = state.get("schema_graph") or {}
+        runtime = current_query_runtime()
+        timed_out = next(
+            (item for item in reversed(execution_log) if item.get("error_code") == "timeout"),
+            None,
+        )
         table_ids = [item["id"] for item in graph.get("tables", [])]
         table_labels = [item["label"] for item in SCHEMA if item["id"] in table_ids]
         metric_columns = [
@@ -124,11 +136,25 @@ class ResultBuilder:
         ]
         if state.get("analysis_sources"):
             steps.append(f"综合分析{len(state['analysis_sources'])}张用户指定历史表")
+        valid = bool(final.get("valid", True))
+        analysis = str(final.get("analysis") or "").strip()
+        if not analysis:
+            if valid and combined.rows:
+                analysis = f"查询已完成，返回 {len(combined.rows)} 行结果。"
+            elif valid:
+                analysis = "查询已完成，但数据库没有返回匹配行。"
+            else:
+                analysis = "结果校验未通过，未返回可用结果。"
         return QueryResult(
             task_id=state["task_id"],
-            status="completed" if final.get("valid", True) else "failed",
+            status="completed" if valid else "failed",
             route="database_query",
-            message="查询完成" if final.get("valid", True) else "结果校验未通过",
+            message=(
+                "查询完成（结果说明阶段超时）"
+                if timed_out and valid
+                else "查询完成（无匹配结果）" if valid and not combined.rows
+                else "查询完成" if valid else "结果校验未通过"
+            ),
             interpretation=Interpretation(
                 metric="、".join(metric_columns) or "查询结果指标",
                 dimension="、".join(dimension_columns) or "无分组维度",
@@ -143,7 +169,7 @@ class ResultBuilder:
             columns=combined.columns,
             column_labels=column_labels(combined.columns),
             rows=combined.rows,
-            analysis=final.get("analysis"),
+            analysis=analysis,
             route_reason=str(state.get("intent", {}).get("reason") or "问数"),
             retrieval=ResultBuilder.public_retrieval(state.get("retrieval") or {}),
             execution_log=execution_log,
@@ -155,10 +181,14 @@ class ResultBuilder:
             workflow_mode=mode,
             dataset_version=state.get("dataset_version"),
             prompt_token_count=state.get("prompt_token_count"),
+            elapsed_ms=runtime.elapsed_ms if runtime else None,
+            error_code="timeout" if timed_out else None,
+            failure_stage=str(timed_out.get("stage")) if timed_out else None,
         )
 
     @staticmethod
     def failed(state: dict[str, Any], execution: SqlExecution, log: list[dict[str, Any]]) -> QueryResult:
+        runtime = current_query_runtime()
         return QueryResult(
             task_id=state["task_id"],
             status="failed",
@@ -172,6 +202,7 @@ class ResultBuilder:
             standalone_query=state.get("standalone_query"),
             schema_graph=state.get("schema_graph"),
             workflow_mode=str(state.get("workflow_mode") or "query_agent"),
+            elapsed_ms=runtime.elapsed_ms if runtime else None,
         )
 
     @staticmethod

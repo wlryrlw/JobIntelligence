@@ -1,2 +1,1 @@
-"""AskData Studio backend package."""
-
+"""OfferAgent backend package."""

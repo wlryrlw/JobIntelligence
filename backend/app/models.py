@@ -24,6 +24,7 @@ class WorkspaceConfig(BaseModel):
 class QueryRequest(BaseModel):
     query: str = Field(min_length=1, max_length=500)
     session_id: str = "demo-session"
+    task_id: str | None = Field(default=None, min_length=8, max_length=200)
     workspace: WorkspaceConfig | None = None
     # 求职分析的显式上下文。不能要求模型从自然语言中猜测随机 resume_id。
     resume_id: str | None = Field(default=None, min_length=8, max_length=200)
@@ -109,6 +110,9 @@ class QueryResult(BaseModel):
     report: AnalysisReport | None = None
     career_report: CareerReport | None = None
     report_tool_calls: list[dict[str, Any]] = Field(default_factory=list)
+    elapsed_ms: int | None = Field(default=None, ge=0)
+    error_code: str | None = Field(default=None, max_length=100)
+    failure_stage: str | None = Field(default=None, max_length=100)
 
 
 class SchemaField(BaseModel):
@@ -130,7 +134,7 @@ class SchemaTable(BaseModel):
     label: str
     description: str
     fields: list[SchemaField]
-    database: str = "askdata_mock"
+    database: str = "jobs_market"
     domain: str = ""
     business_terms: list[str] = Field(default_factory=list)
     primary_key: list[str] = Field(default_factory=list)

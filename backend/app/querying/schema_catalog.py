@@ -3,7 +3,7 @@ from pathlib import Path
 from typing import Any
 
 from ..contracts import SchemaCatalog, SchemaCatalogField, SchemaCatalogTable
-from ..database import RELATIONS, SCHEMA, physical_table_name
+from ..database import DEFAULT_DATABASE, RELATIONS, SCHEMA, physical_table_name
 from ..etl.schema import load_market_schema
 from ..security import AccessScope
 from .duckdb_engine import DuckDbEngine
@@ -100,7 +100,7 @@ class SchemaCatalogBuilder:
                 market.dataset_version,
                 [relation.model_dump(mode="json") for relation in market.relations],
             )
-        definitions = [table for table in SCHEMA if str(table.get("database") or "askdata_mock") == database]
+        definitions = [table for table in SCHEMA if str(table.get("database") or DEFAULT_DATABASE) == database]
         names = {str(table.get("id") or table.get("name")) for table in definitions}
         relations = [
             relation for relation in RELATIONS

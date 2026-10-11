@@ -45,7 +45,7 @@ function displayColumn(column: string) {
 function formatCell(value: unknown, column: string) {
   if (value === null || value === undefined || value === "") return "—"
   if (typeof value !== "number") return String(value)
-  if (/金额|销售额|客单价|收入|薪资|salary|amount/i.test(`${column} ${displayColumn(column)}`)) {
+  if (/金额|收入|薪资|salary|amount/i.test(`${column} ${displayColumn(column)}`)) {
     return new Intl.NumberFormat("zh-CN", { style: "currency", currency: "CNY", maximumFractionDigits: 0 }).format(value)
   }
   if (/率|占比/.test(column)) return `${(value * 100).toFixed(1)}%`

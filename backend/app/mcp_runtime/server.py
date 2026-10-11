@@ -3,7 +3,7 @@ from __future__ import annotations
 from mcp.server import MCPServer
 from mcp.types import ToolAnnotations
 
-from ..database import SCHEMA, physical_table_name
+from ..database import DEFAULT_DATABASE, SCHEMA, physical_table_name
 from ..querying.duckdb_engine import DuckDbEngine
 from ..security import AccessController, AccessScope
 from .tools import build_database_query_tool
@@ -25,13 +25,13 @@ def create_local_mcp_server(
     database_engine = engine or DuckDbEngine()
     scope = access_scope or AccessController().resolve(None)
     server = MCPServer(
-        name="askdata-local-tools",
-        title="AskData本地工具服务",
+        name="offeragent-local-tools",
+        title="OfferAgent本地数据库工具服务",
         description="提供按用户权限隔离的本地数据库只读查询工具。",
         instructions="调用数据库工具前先根据Schema图生成一条只读DuckDB SQL。",
     )
 
-    databases = sorted({str(table.get("database") or "askdata_mock") for table in SCHEMA})
+    databases = sorted({str(table.get("database") or DEFAULT_DATABASE) for table in SCHEMA})
     for database in databases:
         if not scope.allows_database(database):
             continue

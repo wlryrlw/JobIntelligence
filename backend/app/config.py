@@ -43,6 +43,9 @@ class Settings:
     timeout: int = int(os.getenv("LLM_TIMEOUT", "60"))
     temperature: float = float(os.getenv("LLM_TEMPERATURE", "0"))
     max_retries: int = int(os.getenv("LLM_MAX_RETRIES", "2"))
+    query_timeout_seconds: float = float(os.getenv("QUERY_TIMEOUT_SECONDS", "60"))
+    query_llm_timeout_seconds: float = float(os.getenv("QUERY_LLM_TIMEOUT_SECONDS", "20"))
+    query_max_retries: int = int(os.getenv("QUERY_MAX_RETRIES", "1"))
     schema_recall_threshold: float = float(os.getenv("SCHEMA_RECALL_THRESHOLD", "0.55"))
     bm25_top_k: int = int(os.getenv("BM25_TOP_K", "30"))
     dense_top_k: int = int(os.getenv("DENSE_TOP_K", "30"))
@@ -112,6 +115,9 @@ class Settings:
             "embedding_model": self.embedding_model,
             "embedding_dimensions": self.embedding_dimensions,
             "rerank_model": self.rerank_model,
+            "query_timeout_seconds": self.query_timeout_seconds,
+            "query_llm_timeout_seconds": self.query_llm_timeout_seconds,
+            "query_max_retries": self.query_max_retries,
             "semantic_fallbacks": False,
             "route_availability_fallback": "direct_response_no_database",
             "schema_recall_threshold": self.schema_recall_threshold,

@@ -8,6 +8,7 @@ from typing import Any
 from ..errors import PipelineStageError
 from ..model_client import ModelClient
 from ..models import AnalysisReport, VisualizationSpec
+from ..query_runtime import QueryTimeoutError, emit_progress
 from ..skills import SkillDefinition
 from .charting import build_visualization_spec
 
@@ -36,6 +37,7 @@ class DataQaAgent:
         query: str,
         contexts: dict[str, str],
     ) -> DataQaResult:
+        emit_progress("data_qa", "正在整理已有岗位结果和分析上下文")
         tools = [
             {"name": name}
             for name in self._presentation_actions()
@@ -63,7 +65,7 @@ class DataQaAgent:
         try:
             payload = self.model_client.chat_json(system, user)
             return self._execute(payload, source_catalog)
-        except PipelineStageError:
+        except (PipelineStageError, QueryTimeoutError):
             raise
         except (RuntimeError, ValueError, KeyError, TypeError) as exc:
             raise PipelineStageError("qa_answer", str(exc)) from exc

@@ -5,6 +5,7 @@ from typing import Any
 from ..config import Settings, settings
 from ..errors import PipelineStageError
 from ..model_client import ModelClient
+from ..query_runtime import QueryTimeoutError, emit_progress
 from .models import SqlExecution
 
 
@@ -26,6 +27,7 @@ class ResponseGenerator:
         schema_context: str,
         analysis_context: str,
     ) -> dict[str, Any]:
+        emit_progress("result_analysis", "正在整理查询结果并生成简短说明")
         system = """你是查询结果整理器。检查结果能否回答问题，并生成简短标题和一到两句说明。
 只能使用结果中真实存在的数值。只返回JSON：
 {"valid":true,"reason":"...","title":"...","analysis":"..."}。"""
@@ -42,5 +44,7 @@ class ResponseGenerator:
                 "title": str(payload.get("title") or "查询结果"),
                 "analysis": str(payload.get("analysis") or f"查询返回{len(execution.rows)}行。"),
             }
+        except QueryTimeoutError:
+            raise
         except RuntimeError as exc:
             raise PipelineStageError("result_analysis", str(exc)) from exc

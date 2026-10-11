@@ -256,6 +256,9 @@ export interface QueryResult {
   attempts?: SqlAttempt[]
   dataset_version?: string | null
   prompt_token_count?: number | null
+  elapsed_ms?: number | null
+  error_code?: string | null
+  failure_stage?: string | null
 }
 
 export interface ReportDataSource {
@@ -300,7 +303,7 @@ export interface AuthUser {
   user_id: string
   username: string
   display_name: string
-  role: "admin" | "current_sales" | string
+  role: "admin" | "candidate" | string
 }
 
 export interface LoginResponse {
@@ -316,6 +319,21 @@ export interface TaskEvent {
   event_type: string
   timestamp: string
   payload: Record<string, string | number | boolean | null>
+}
+
+export interface QueryProgressEvent {
+  event_id: string
+  task_id: string
+  sequence: number
+  event_type: string
+  timestamp: string
+  payload: {
+    stage?: string
+    message?: string
+    status?: string
+    elapsed_ms?: number | null
+    [key: string]: string | number | boolean | null | undefined
+  }
 }
 
 export interface TaskSnapshot {

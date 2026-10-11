@@ -1,1 +1,1 @@
-"""AskData Studio backend tests."""
+"""OfferAgent backend tests."""

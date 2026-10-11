@@ -5,7 +5,7 @@ import json
 from collections import deque
 from typing import Any
 
-from ..database import RELATIONS, SCHEMA, physical_table_name
+from ..database import DEFAULT_DATABASE, RELATIONS, SCHEMA, physical_table_name
 from ..security import AccessScope
 
 
@@ -88,7 +88,7 @@ class SchemaGraphBuilder:
                 "label": self.tables[table_id]["label"],
                 "description": self.tables[table_id]["description"],
                 "domain": self.tables[table_id].get("domain", ""),
-                "database": self.tables[table_id].get("database", "askdata_mock"),
+                "database": self.tables[table_id].get("database", DEFAULT_DATABASE),
             }
             for table_id in sorted(graph_tables)
             if table_id in self.tables

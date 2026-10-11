@@ -11,6 +11,7 @@ import type {
   MarketDataRun,
   MarketDataSummary,
   QueryResult,
+  QueryProgressEvent,
   ResumeUploadResponse,
   SavedMemory,
   TaskEvent,
@@ -26,9 +27,9 @@ function token() {
   return sessionStorage.getItem(TOKEN_KEY)
 }
 
-async function request<T>(path: string, options?: RequestInit): Promise<T> {
+async function request<T>(path: string, options?: RequestInit, timeoutMs = 90_000): Promise<T> {
   const controller = new AbortController()
-  const timeout = window.setTimeout(() => controller.abort(), 90_000)
+  const timeout = window.setTimeout(() => controller.abort(), timeoutMs)
   const headers = new Headers(options?.headers)
   if (!(options?.body instanceof FormData)) headers.set("Content-Type", "application/json")
   if (token()) headers.set("Authorization", `Bearer ${token()}`)
@@ -74,16 +75,18 @@ export const api = {
     workspace: WorkspaceConfig,
     sessionId: string,
     careerContext?: { resume_id?: string; target?: TargetJobRequest },
+    taskId?: string,
   ) => request<QueryResult>("/api/query", {
     method: "POST",
     body: JSON.stringify({
       query,
       session_id: sessionId,
       workspace,
+      ...(taskId ? { task_id: taskId } : {}),
       ...(careerContext?.resume_id ? { resume_id: careerContext.resume_id } : {}),
       ...(careerContext?.target ? { target: careerContext.target } : {}),
     }),
-  }),
+  }, 75_000),
   uploadResume: (file: File) => {
     const form = new FormData()
     form.append("file", file)
@@ -104,6 +107,62 @@ export const api = {
   memories: () => request<SavedMemory[]>("/api/memories"),
   crawlOptions: () => request<CrawlOptions>("/api/crawl/options"),
   marketDataSummary: () => request<MarketDataSummary>("/api/market-data/summary"),
+  streamQueryEvents: async (
+    taskId: string,
+    onEvent: (event: QueryProgressEvent) => void,
+    signal?: AbortSignal,
+  ) => {
+    const headers = new Headers({
+      Accept: "text/event-stream",
+      ...(token() ? { Authorization: `Bearer ${token()}` } : {}),
+    })
+    let response: Response | null = null
+    for (let attempt = 0; attempt < 20; attempt += 1) {
+      response = await fetch(`${API_BASE}/api/query-runs/${encodeURIComponent(taskId)}/events`, { headers, signal })
+      if (response.status !== 404) break
+      await new Promise((resolve) => window.setTimeout(resolve, 100))
+    }
+    if (!response || !response.ok || !response.body) throw new Error("问答进度 SSE 连接失败")
+    const reader = response.body.getReader()
+    const decoder = new TextDecoder()
+    let buffer = ""
+    let eventName = "message"
+    let eventId = ""
+    let dataLines: string[] = []
+    let terminalEvent = false
+    const flush = () => {
+      if (!dataLines.length) return false
+      const parsed = JSON.parse(dataLines.join("\n")) as QueryProgressEvent
+      onEvent({ ...parsed, event_id: parsed.event_id || eventId, event_type: parsed.event_type || eventName })
+      terminalEvent = ["completed", "failed", "waiting_clarification"].includes(parsed.payload?.status || "")
+      eventName = "message"
+      eventId = ""
+      dataLines = []
+      return terminalEvent
+    }
+    while (true) {
+      const chunk = await reader.read()
+      buffer += decoder.decode(chunk.value || new Uint8Array(), { stream: !chunk.done })
+      const frames = buffer.split(/\r?\n\r?\n/)
+      buffer = frames.pop() || ""
+      for (const frame of frames) {
+        for (const line of frame.split(/\r?\n/)) {
+          if (line.startsWith("event:")) eventName = line.slice(6).trim()
+          else if (line.startsWith("id:")) eventId = line.slice(3).trim()
+          else if (line.startsWith("data:")) dataLines.push(line.slice(5).trim())
+        }
+        if (flush()) {
+          // 进度流是旁路信号；收到终态后主动释放 reader，不能等待服务端的连接收尾。
+          void reader.cancel().catch(() => undefined)
+          return
+        }
+      }
+      if (chunk.done) {
+        flush()
+        break
+      }
+    }
+  },
   marketDataRuns: () => request<MarketDataRun[]>("/api/market-data/runs"),
   deleteMarketDataRun: (runId: string) =>
     request<MarketDataDeleteResult>(`/api/market-data/runs/${encodeURIComponent(runId)}`, { method: "DELETE" }),

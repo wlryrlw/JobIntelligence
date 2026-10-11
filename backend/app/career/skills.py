@@ -9,6 +9,7 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError
 from ..contracts import EvidenceRef, SkillMention
 from ..etl.normalize import ALIASES
 from ..model_client import ModelClient
+from ..query_runtime import QueryTimeoutError
 
 
 class SkillExtractionError(ValueError):
@@ -190,6 +191,8 @@ class SkillCatalog:
         try:
             payload = model_client.chat_json(system, text[:12000])
             response = LlmSkillResponse.model_validate(payload)
+        except QueryTimeoutError:
+            raise
         except (RuntimeError, TypeError, ValueError, ValidationError) as exc:
             raise SkillExtractionError(f"LLM 技能结构化输出校验失败：{type(exc).__name__}") from exc
 

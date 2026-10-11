@@ -28,13 +28,9 @@ class AuthService:
             "password": "admin123",
             "user": AuthUser("demo_admin", "admin", "系统管理员", "admin"),
         },
-        "sales": {
-            "password": "sales123",
-            "user": AuthUser("demo_current_sales", "sales", "销售分析员", "current_sales"),
-        },
-        "mock": {
-            "password": "mock123",
-            "user": AuthUser("demo_analyst", "mock", "Mock 数据分析员", "analyst"),
+        "candidate": {
+            "password": "candidate123",
+            "user": AuthUser("demo_candidate", "candidate", "求职分析员", "candidate"),
         },
     }
 

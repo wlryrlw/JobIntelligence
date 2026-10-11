@@ -9,6 +9,8 @@ import urllib.request
 from typing import Any
 
 from .config import Settings, settings
+from .prompt_context import with_product_context
+from .query_runtime import QueryTimeoutError, current_query_runtime
 
 
 class ModelClient:
@@ -23,6 +25,7 @@ class ModelClient:
         return bool(self.config.api_key)
 
     def chat(self, system: str, user: str, *, temperature: float | None = None) -> str:
+        system = with_product_context(system)
         payload = {
             "model": self.config.llm_model,
             "messages": [
@@ -124,10 +127,30 @@ class ModelClient:
             },
             method="POST",
         )
+        runtime = current_query_runtime()
+        max_timeout = max(0.1, float(self.config.timeout))
+        max_retries = max(0, self.config.max_retries)
+        if runtime is not None:
+            runtime.check("llm_call")
+            max_timeout = min(max_timeout, max(0.1, self.config.query_llm_timeout_seconds))
+            max_retries = min(max_retries, max(0, self.config.query_max_retries))
+
         last_error: Exception | None = None
-        for attempt in range(self.config.max_retries + 1):
+        timed_out = False
+        for attempt in range(max_retries + 1):
+            request_timeout = max_timeout
+            if runtime is not None:
+                remaining = runtime.remaining_seconds
+                if remaining <= 0:
+                    raise QueryTimeoutError(
+                        runtime.current_stage,
+                        "模型调用前已耗尽问答时间预算",
+                        elapsed_ms=runtime.elapsed_ms,
+                        timeout_seconds=runtime.timeout_seconds,
+                    )
+                request_timeout = min(request_timeout, remaining)
             try:
-                with urllib.request.urlopen(request, timeout=self.config.timeout) as response:
+                with urllib.request.urlopen(request, timeout=request_timeout) as response:
                     return json.loads(response.read().decode("utf-8"))
             except urllib.error.HTTPError as exc:
                 detail = exc.read().decode("utf-8", errors="replace")[:500]
@@ -136,8 +159,29 @@ class ModelClient:
                     break
             except (urllib.error.URLError, TimeoutError, json.JSONDecodeError) as exc:
                 last_error = exc
-            if attempt < self.config.max_retries:
-                time.sleep(0.4 * (2**attempt))
+                timed_out = isinstance(exc, TimeoutError) or (
+                    isinstance(exc, urllib.error.URLError)
+                    and "timed out" in str(exc).lower()
+                )
+            if runtime is not None and runtime.remaining_seconds <= 0:
+                raise QueryTimeoutError(
+                    runtime.current_stage,
+                    "模型调用耗尽问答时间预算",
+                    elapsed_ms=runtime.elapsed_ms,
+                    timeout_seconds=runtime.timeout_seconds,
+                )
+            if attempt < max_retries:
+                backoff = 0.4 * (2**attempt)
+                if runtime is not None and runtime.remaining_seconds <= backoff:
+                    break
+                time.sleep(backoff)
+        if runtime is not None and (runtime.remaining_seconds <= 0 or timed_out):
+            raise QueryTimeoutError(
+                runtime.current_stage,
+                "模型调用超时，已停止重试",
+                elapsed_ms=runtime.elapsed_ms,
+                timeout_seconds=runtime.timeout_seconds,
+            )
         # 网络请求失败后对当前接口启用短时熔断。
         self._blocked_until[url] = time.monotonic() + 30
         raise RuntimeError(f"模型接口调用失败: {last_error}") from last_error
