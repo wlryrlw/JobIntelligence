@@ -7,7 +7,7 @@ from langgraph.graph import END, START, StateGraph
 from langgraph.types import Command, interrupt
 
 from ..config import Settings, settings
-from ..contracts import UserRequest
+from ..contracts import QueryPlan, UserRequest
 from ..career import (
     CareerAgent,
     CareerAgentError,
@@ -26,12 +26,10 @@ from ..models import QueryResult
 from ..preprocessing import RequestPreprocessor
 from ..querying.duckdb_engine import DuckDbEngine
 from ..querying.data_qa_agent import DataQaAgent
-from ..querying.column_labels import column_labels
 from ..querying.models import SqlExecution
 from ..querying.response_generator import ResponseGenerator
 from ..querying.query_agent import QueryAgent
 from ..querying.schema_catalog import SchemaCatalogBuilder
-from ..querying.single_database_agent import SingleDatabaseAgent
 from ..retrieval import SchemaGraphBuilder, SchemaIndex
 from ..security import AccessScope
 from ..skills import SkillRegistry
@@ -62,12 +60,6 @@ class QueryWorkflow:
             SchemaCatalogBuilder(self.database_engine.database_root),
             max_attempts=3,
         )
-        self.single_database_agent = SingleDatabaseAgent(
-            model_client,
-            self.mcp_client,
-            self.skills.get("database_query"),
-            self.config.mcp_max_tool_calls,
-        )
         self.response_generator = ResponseGenerator(
             model_client,
             self.config,
@@ -83,13 +75,12 @@ class QueryWorkflow:
         )
         self.data_qa_agent = DataQaAgent(
             model_client,
-            self.mcp_client,
             self.skills.get("data_qa"),
         )
         self.checkpointer = InMemorySaver()
         self.graph = self._compile()
 
-    def mcp_client(self, access_scope: dict[str, Any]) -> LocalMcpClient:
+    def database_mcp_client(self, access_scope: dict[str, Any]) -> LocalMcpClient:
         scope = AccessScope.from_dict(access_scope)
         return LocalMcpClient(create_local_mcp_server(self.database_engine, scope))
 
@@ -102,8 +93,6 @@ class QueryWorkflow:
         builder.add_node("query_agent", self._query_agent)
         builder.add_node("retrieve_schema", self._retrieve_schema)
         builder.add_node("human_clarification", self._human_clarification)
-        builder.add_node("prepare_single_database", self._prepare_single_database)
-        builder.add_node("execute_single_database", self._execute_single_database)
         builder.add_node("run_multi_database", self._run_multi_database)
         builder.add_edge(START, "preprocess")
         builder.add_conditional_edges(
@@ -120,28 +109,23 @@ class QueryWorkflow:
         builder.add_edge("respond_directly", END)
         builder.add_edge("answer_qa", END)
         builder.add_edge("coordinate_career", END)
-        builder.add_edge("query_agent", END)
         builder.add_conditional_edges(
             "retrieve_schema",
             self._after_retrieval,
             {
                 "human_clarification": "human_clarification",
-                "prepare_single_database": "prepare_single_database",
+                "query_agent": "query_agent",
                 "run_multi_database": "run_multi_database",
             },
         )
         builder.add_edge("human_clarification", "retrieve_schema")
         builder.add_conditional_edges(
-            "prepare_single_database",
-            lambda state: "human_clarification" if state.get("clarification") else "execute_single_database",
-            {
-                "human_clarification": "human_clarification",
-                "execute_single_database": "execute_single_database",
-            },
-        )
-        builder.add_edge("execute_single_database", END)
-        builder.add_conditional_edges(
             "run_multi_database",
+            lambda state: "human_clarification" if state.get("clarification") else "end",
+            {"human_clarification": "human_clarification", "end": END},
+        )
+        builder.add_conditional_edges(
+            "query_agent",
             lambda state: "human_clarification" if state.get("clarification") else "end",
             {"human_clarification": "human_clarification", "end": END},
         )
@@ -229,7 +213,6 @@ class QueryWorkflow:
                 "recent_result": state.get("recent_result_context", ""),
                 "selected_tables": state.get("analysis_context", ""),
             },
-            state.get("access_scope") or {},
         )
         result = ResultBuilder.qa(
             state["task_id"], qa_result, state["intent"], state.get("analysis_sources") or []
@@ -240,68 +223,130 @@ class QueryWorkflow:
         }
 
     def _query_agent(self, state: QueryState) -> dict[str, Any]:
-        allowed = [
+        allowed = {
             str(item)
             for item in (state.get("access_scope") or {}).get("allowed_databases") or []
-        ]
-        database = "jobs_market" if "jobs_market" in allowed else (allowed[0] if allowed else "jobs_market")
+        }
+        database_names = [str(item) for item in state.get("database_names") or []]
+        database = (
+            database_names[0]
+            if len(database_names) == 1
+            else "jobs_market"
+            if "jobs_market" in allowed
+            else sorted(allowed)[0]
+            if allowed
+            else "jobs_market"
+        )
         execution_log: list[dict[str, Any]] = []
 
         def on_event(event_type: str, payload: dict[str, Any]) -> None:
             execution_log.append({"stage": event_type, "success": event_type != "query.failed", **payload})
 
+        extraction = state.get("extraction") or {}
+        workspace = state.get("workspace") or {}
+        plan = QueryPlan(
+            query=state.get("standalone_query") or state["query"],
+            database=database,
+            filters=[str(item) for item in extraction.get("filters") or []],
+            metrics=[str(item) for item in extraction.get("metrics") or []],
+            dimensions=[str(item) for item in extraction.get("dimensions") or []],
+            time_expressions=[
+                str(item) for item in extraction.get("time_expressions") or []
+            ],
+            confirmed_parameters={
+                str(key): str(value)
+                for key, value in (workspace.get("confirmed_parameters") or {}).items()
+            },
+        )
         result = self.query_agent.run(
-            state["standalone_query"] or state["query"],
-            database,
-            access_scope=state.get("access_scope") or {},
+            plan,
+            access_scope=self._narrowed_scope(state) if database_names else state.get("access_scope") or {},
             event_sink=on_event,
         )
-        attempts = [item.model_dump(mode="json") for item in result.attempts]
-        if result.status == "completed":
+
+        if result.status == "waiting_clarification":
+            clarification = result.clarification
+            if clarification is None:
+                raise PipelineStageError(
+                    "query_clarification",
+                    "QueryAgent返回等待状态但缺少澄清内容",
+                )
             return {
-                "workflow_mode": "full_schema_query_agent",
+                "workflow_mode": "query_agent_clarification",
                 "execution_log": execution_log,
-                "result": QueryResult(
-                    task_id=state["task_id"],
-                    status="completed",
-                    route="database_query",
-                    message="查询完成",
-                    sql=result.sql,
-                    columns=result.columns,
-                    column_labels=column_labels(result.columns),
-                    rows=result.rows,
-                    steps=[
-                        "意图路由：database_query",
-                        f"全量 Schema 注入（{result.schema.prompt_token_count if result.schema else 0} token 估算）",
-                        f"SQL 尝试 {len(attempts)} 次（含可修复错误回喂）",
-                        "只读校验并执行 DuckDB",
-                    ],
-                    analysis="查询结果已按数据集版本返回。",
-                    route_reason=str(state.get("intent", {}).get("reason") or "问数"),
-                    execution_log=execution_log,
-                    sql_attempts=attempts,
-                    dataset_version=result.dataset_version,
-                    prompt_token_count=result.schema.prompt_token_count if result.schema else None,
-                    workflow_mode="full_schema_query_agent",
-                ).model_dump(mode="json"),
+                "clarification": clarification.model_dump(mode="json"),
+                "result": {},
             }
+
+        schema_context = result.schema.render() if result.schema else state.get("schema_context", "")
+        sql = result.sql or (result.attempts[-1].sql if result.attempts else "")
+        execution = SqlExecution(
+            sql=sql,
+            success=result.status == "completed",
+            columns=result.columns,
+            rows=result.rows,
+            error=result.error,
+            error_kind=result.error_kind.value if result.error_kind else None,
+        )
+        query_state = {
+            **state,
+            "workflow_mode": "query_agent",
+            "schema_context": schema_context,
+            "dataset_version": result.dataset_version,
+            "prompt_token_count": result.schema.prompt_token_count if result.schema else None,
+        }
+        call = {
+            "call_index": 1,
+            "database": database,
+            "arguments": {
+                "mode": "query_agent",
+                "transport": "direct",
+                "schema_catalog_version": result.dataset_version,
+                "sql_source": "model",
+            },
+            "sql": execution.sql,
+            "success": execution.success,
+            "row_count": len(execution.rows),
+            "error": execution.error,
+        }
+        if not execution.success:
+            final_result = ResultBuilder.failed(query_state, execution, execution_log)
+            return {
+                "workflow_mode": "query_agent",
+                "execution_log": execution_log,
+                "tool_calls": [call],
+                "result": final_result.model_dump(mode="json"),
+            }
+
+        try:
+            final = self.response_generator.finalize(
+                plan.query,
+                execution,
+                schema_context,
+                state.get("analysis_context", ""),
+            )
+        except PipelineStageError as exc:
+            execution_log.append({"stage": exc.stage, "success": False, "error": exc.message})
+            final = {
+                "valid": True,
+                "reason": f"{exc.stage}失败",
+                "title": "查询结果（文字说明生成失败）",
+                "analysis": f"SQL已成功执行，但{exc.stage}失败：{exc.message}",
+            }
+
+        final_result = ResultBuilder.completed(
+            query_state,
+            [execution],
+            execution,
+            final,
+            [call],
+            execution_log,
+        )
         return {
-            "workflow_mode": "full_schema_query_agent",
+            "workflow_mode": "query_agent",
             "execution_log": execution_log,
-            "result": QueryResult(
-                task_id=state["task_id"],
-                status="failed",
-                route="database_query",
-                message="查询执行失败",
-                analysis=result.error or "SQL 执行失败",
-                route_reason=str(state.get("intent", {}).get("reason") or "问数"),
-                steps=["意图路由：database_query", "全量 Schema 注入", f"SQL 尝试 {len(attempts)} 次", "执行失败并停止"],
-                execution_log=execution_log,
-                sql_attempts=attempts,
-                dataset_version=result.dataset_version,
-                prompt_token_count=result.schema.prompt_token_count if result.schema else None,
-                workflow_mode="full_schema_query_agent",
-            ).model_dump(mode="json"),
+            "tool_calls": [call],
+            "result": final_result.model_dump(mode="json"),
         }
 
     def _coordinate_career(self, state: QueryState) -> dict[str, Any]:
@@ -501,14 +546,13 @@ class QueryWorkflow:
             "schema_context": self.graph_builder.context_text(schema_graph),
             "database_names": databases,
             "clarification": None,
-            "direct_sql": "",
         }
 
     @staticmethod
     def _after_retrieval(state: QueryState) -> str:
         if state.get("clarification"):
             return "human_clarification"
-        return "prepare_single_database" if len(state.get("database_names") or []) <= 1 else "run_multi_database"
+        return "query_agent" if len(state.get("database_names") or []) <= 1 else "run_multi_database"
 
     def _human_clarification(self, state: QueryState) -> dict[str, Any]:
         # LangGraph 将 Command(resume=...) 的值作为 interrupt 返回值。
@@ -532,100 +576,7 @@ class QueryWorkflow:
             **dict(workspace.get("confirmed_parameters") or {}),
             parameter: option_id,
         }
-        return {"workspace": workspace, "clarification": None, "direct_sql": "", "result": {}}
-
-    def _prepare_single_database(self, state: QueryState) -> dict[str, Any]:
-        workspace = dict(state.get("workspace") or {})
-        database = (state.get("database_names") or ["askdata_mock"])[0]
-        decision = self.single_database_agent.prepare(
-            state["standalone_query"],
-            database,
-            state["schema_graph"],
-            state["schema_context"],
-            state["retrieval"],
-            workspace,
-            state.get("access_scope") or {},
-        )
-        if decision["action"] == "clarify":
-            return {
-                "workflow_mode": "single_database_agent",
-                "clarification": decision["clarification"],
-                "mcp_tool_trace": decision.get("tool_trace", []),
-                "direct_sql": "",
-            }
-        execution = decision["execution"]
-        return {
-            "workflow_mode": "single_database_agent",
-            "clarification": None,
-            "mcp_execution": execution,
-            "mcp_tool_trace": decision.get("tool_trace", []),
-            "direct_sql": str(execution.get("sql") or ""),
-            "sql_source": decision.get("source", "model"),
-        }
-
-    def _execute_single_database(self, state: QueryState) -> dict[str, Any]:
-        database = (state.get("database_names") or ["askdata_mock"])[0]
-        raw_execution = state.get("mcp_execution") or {}
-        execution = SqlExecution(
-            sql=str(raw_execution.get("sql") or state.get("direct_sql") or ""),
-            success=bool(raw_execution.get("success")),
-            columns=list(raw_execution.get("columns") or []),
-            rows=list(raw_execution.get("rows") or []),
-            error=raw_execution.get("error"),
-        )
-        trace = list(state.get("mcp_tool_trace") or [])
-        log = [
-            {
-                "stage": "mcp_tool_call",
-                "success": not bool(item.get("result", {}).get("error")),
-                **item,
-            }
-            for item in trace
-        ]
-        log.append({
-            "stage": "execute_duckdb",
-            "success": execution.success,
-            "error": execution.error,
-            "via": "mcp",
-        })
-        database_call = next(
-            (item for item in reversed(trace) if item.get("tool") == f"query_{database}"),
-            {},
-        )
-        call = {
-            "call_index": int(database_call.get("call_index") or 1),
-            "database": database,
-            "arguments": {
-                "mode": "single_database_agent",
-                "transport": "mcp_in_process",
-                "tool_name": database_call.get("tool"),
-                "schema_graph_version": state.get("schema_graph", {}).get("graph_version"),
-                "sql_source": state.get("sql_source", "model"),
-            },
-            "sql": execution.sql,
-            "success": execution.success,
-            "row_count": len(execution.rows),
-            "error": execution.error,
-        }
-        if not execution.success:
-            result = ResultBuilder.failed(state, execution, log)
-            return {"execution_log": log, "tool_calls": [call], "result": result.model_dump(mode="json")}
-        try:
-            final = self.response_generator.finalize(
-                state["standalone_query"], execution, state["schema_context"],
-                state.get("analysis_context", ""),
-            )
-        except PipelineStageError as exc:
-            # 结果说明失败时仍保留已成功执行的查询结果。
-            log.append({"stage": exc.stage, "success": False, "error": exc.message})
-            final = {
-                "valid": True,
-                "reason": f"{exc.stage}失败",
-                "title": "查询结果（文字说明生成失败）",
-                "analysis": f"SQL已成功执行，但{exc.stage}失败：{exc.message}",
-            }
-        result = ResultBuilder.completed(state, [execution], execution, final, [call], log)
-        return {"execution_log": log, "tool_calls": [call], "result": result.model_dump(mode="json")}
+        return {"workspace": workspace, "clarification": None, "result": {}}
 
     def _run_multi_database(self, state: QueryState) -> dict[str, Any]:
         """多库命中时请求用户选择目标库，选定后回流检索按单库执行。"""

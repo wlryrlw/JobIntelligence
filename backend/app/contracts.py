@@ -11,7 +11,7 @@ from datetime import datetime, timezone
 from enum import StrEnum
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 
 def utc_now() -> datetime:
@@ -82,6 +82,7 @@ class QueryEventType(StrEnum):
     SQL_VALIDATED = "query.sql_validated"
     SQL_EXECUTED = "query.sql_executed"
     SQL_REPAIR = "query.sql_repair"
+    CLARIFICATION = "query.clarification"
     COMPLETED = "query.completed"
     FAILED = "query.failed"
 
@@ -285,6 +286,8 @@ class QueryPlan(BaseModel):
     filters: list[str] = Field(default_factory=list, max_length=50)
     metrics: list[str] = Field(default_factory=list, max_length=50)
     dimensions: list[str] = Field(default_factory=list, max_length=50)
+    time_expressions: list[str] = Field(default_factory=list, max_length=20)
+    confirmed_parameters: dict[str, str] = Field(default_factory=dict, max_length=20)
 
     @field_validator("query")
     @classmethod
@@ -295,11 +298,39 @@ class QueryPlan(BaseModel):
         return value
 
 
+class QueryClarificationOption(BaseModel):
+    """QueryAgent 返回的、经过校验的用户选择项。"""
+
+    id: str = Field(min_length=1, max_length=200)
+    label: str = Field(min_length=1, max_length=200)
+    description: str = Field(default="", max_length=500)
+    recommended: bool = False
+
+
+class QueryClarification(BaseModel):
+    """QueryAgent 在生成 SQL 前请求用户补充的信息。"""
+
+    parameter: str = Field(default="other", min_length=1, max_length=100)
+    question: str = Field(min_length=1, max_length=500)
+    reason: str = Field(min_length=1, max_length=1000)
+    options: list[QueryClarificationOption] = Field(default_factory=list, max_length=20)
+
+
 class SqlGeneration(BaseModel):
     """模型生成 SQL 时使用的严格结构化输出。"""
 
-    sql: str = Field(min_length=1, max_length=20000)
+    action: Literal["generate_sql", "clarify"] = "generate_sql"
+    sql: str = Field(default="", max_length=20000)
     explanation: str = Field(default="", max_length=1000)
+    clarification: QueryClarification | None = None
+
+    @model_validator(mode="after")
+    def validate_action_payload(self) -> "SqlGeneration":
+        if self.action == "generate_sql" and not self.sql.strip():
+            raise ValueError("生成SQL动作必须包含sql")
+        if self.action == "clarify" and self.clarification is None:
+            raise ValueError("澄清动作必须包含clarification")
+        return self
 
 
 class SchemaCatalogField(BaseModel):
@@ -399,13 +430,14 @@ class QueryAgentResult(BaseModel):
     query: str = Field(min_length=1, max_length=5000)
     database: str = Field(min_length=1, max_length=100)
     dataset_version: str | None = Field(default=None, max_length=200)
-    status: Literal["completed", "failed"]
+    status: Literal["completed", "failed", "waiting_clarification"]
     sql: str = ""
     columns: list[str] = Field(default_factory=list)
     rows: list[dict[str, Any]] = Field(default_factory=list, max_length=200)
     attempts: list[SqlAttempt] = Field(default_factory=list, max_length=3)
     error_kind: SqlErrorKind | None = None
     error: str | None = Field(default=None, max_length=2000)
+    clarification: QueryClarification | None = None
     schema_catalog: SchemaCatalog | None = Field(default=None, alias="schema")
 
     @property

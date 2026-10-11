@@ -92,26 +92,15 @@ class FakeModelClient:
                 "answer": "华东销售额最高，回答复用了最近一次查询结果。",
                 "tool_calls": [],
             }
-        if system.startswith("你是单数据库问数智能体") and "上一次DuckDB" not in system:
+        if system.startswith("你是严格的 NL2SQL 生成器"):
             state = json.loads(user)
             query = state["query"]
-            graph_text = json.dumps(state["schema_graph"], ensure_ascii=False)
-            confirmed_tables = set(state.get("confirmed_parameters", {}).values())
-            tool_results = state.get("tool_results", [])
+            confirmed_parameters = state.get("confirmed_parameters", {})
+            catalog_text = system
 
-            if "今天" in query and not any(
-                item.get("tool") == "current_datetime" for item in tool_results
-            ):
-                return {
-                    "action": "call_tool",
-                    "tool_name": "current_datetime",
-                    "arguments": {"timezone_name": "Asia/Shanghai"},
-                    "reason": "先获取今天的明确日期",
-                }
-            if "歧义查询" in query and not confirmed_tables:
+            if "歧义查询" in query and not confirmed_parameters:
                 return {
                     "action": "clarify",
-                    "reason": "模型判断时间范围会改变结果",
                     "clarification": {
                         "parameter": "time_range",
                         "question": "查询当前订单还是历史订单？",
@@ -122,19 +111,15 @@ class FakeModelClient:
                         ],
                     },
                 }
-            if "sales_targets" in graph_text and "销售目标" in query:
+            selected_table = confirmed_parameters.get("time_range")
+            if "sales_targets" in catalog_text and "销售目标" in query:
                 sql = "WITH actual AS (SELECT region, SUM(paid_amount) AS sales FROM orders_current WHERE status = '已支付' GROUP BY region), target AS (SELECT region, target_amount FROM sales_targets WHERE target_month = '2026-08') SELECT a.region AS '销售地区', ROUND(a.sales, 2) AS '销售额', ROUND(t.target_amount, 2) AS '销售目标', ROUND(a.sales / NULLIF(t.target_amount, 0), 4) AS '目标完成率' FROM actual a JOIN target t ON a.region = t.region ORDER BY 4 DESC"
             elif "客户等级" in query:
                 sql = "SELECT c.customer_level AS '客户等级', ROUND(SUM(o.paid_amount), 2) AS '销售额' FROM orders_current o JOIN customers c ON o.customer_id = c.customer_id WHERE o.status = '已支付' GROUP BY c.customer_level ORDER BY 2 DESC"
             else:
-                table = "orders_history" if "orders_history" in graph_text and "orders_current" not in graph_text else "orders_current"
+                table = "orders_history" if selected_table == "orders_history" else "orders_current"
                 sql = f"SELECT region AS '销售地区', ROUND(SUM(paid_amount), 2) AS '销售额' FROM {table} WHERE status = '已支付' GROUP BY region ORDER BY 2 DESC"
-            return {
-                "action": "call_tool",
-                "tool_name": "query_askdata_mock",
-                "arguments": {"sql": sql},
-                "reason": "通过MCP数据库工具执行查询",
-            }
+            return {"action": "generate_sql", "sql": sql, "explanation": "测试生成只读SQL"}
         if "查询结果整理器" in system:
             return {"valid": True, "reason": "结果符合问题", "title": "销售查询结果", "analysis": "查询结果已经按要求汇总。"}
         if "一级意图路由器" in system:
@@ -283,7 +268,7 @@ class FakeModelClient:
 
 class SqlGenerationFailureClient(FakeModelClient):
     def chat_json(self, system: str, user: str) -> dict:
-        if system.startswith("你是单数据库问数智能体"):
+        if system.startswith("你是严格的 NL2SQL 生成器"):
             raise RuntimeError("SQL生成模型测试失败")
         return super().chat_json(system, user)
 
@@ -297,12 +282,11 @@ class PreprocessingFailureClient(FakeModelClient):
 
 class InvalidSqlClient(FakeModelClient):
     def chat_json(self, system: str, user: str) -> dict:
-        if system.startswith("你是单数据库问数智能体"):
+        if system.startswith("你是严格的 NL2SQL 生成器"):
             return {
-                "action": "call_tool",
-                "tool_name": "query_askdata_mock",
-                "arguments": {"sql": "SELECT missing_column FROM orders_current"},
-                "reason": "测试错误SQL",
+                "action": "generate_sql",
+                "sql": "SELECT missing_column FROM orders_current",
+                "explanation": "测试错误SQL",
             }
         return super().chat_json(system, user)
 
@@ -399,18 +383,18 @@ class AskDataServiceTest(unittest.TestCase):
         self.assertIsNotNone(payload.workspace)
         self.assertNotIn("schema_fields", payload.workspace.model_dump())
 
-    def test_relative_date_calls_datetime_tool_before_sql(self) -> None:
+    def test_relative_date_is_passed_to_query_agent_without_mcp_call(self) -> None:
         result = self.service.submit(
             "查询今天各地区销售额",
             "s1",
             {"confirmed_schema_tables": ["orders_current"]},
         )
-        tool_result = next(item for item in result.execution_log if item["stage"] == "mcp_tool_call")
-        self.assertEqual(tool_result["tool"], "current_datetime")
-        self.assertIn("date", tool_result["result"])
+        stages = [item["stage"] for item in result.execution_log]
+        self.assertNotIn("mcp_tool_call", stages)
+        self.assertIn("query.sql_generated", stages)
         self.assertEqual(len(result.tool_calls), 1)
 
-    def test_single_database_agent_executes_one_query(self) -> None:
+    def test_query_agent_executes_one_query(self) -> None:
         result = self.service.submit("查询本月各地区销售额", "s1")
         self.assertEqual(result.columns, ["销售地区", "销售额"])
         self.assertEqual(len(result.tool_calls), 1)
@@ -429,13 +413,13 @@ class AskDataServiceTest(unittest.TestCase):
         self.assertEqual(len(result.tool_calls), 1)
         self.assertIn("JOIN customers", result.sql)
 
-    def test_actual_vs_target_uses_single_database_agent(self) -> None:
+    def test_actual_vs_target_uses_query_agent(self) -> None:
         result = self.service.submit("对比本月各地区销售额和销售目标", "s1")
         self.assertEqual(len(result.tool_calls), 1)
         arguments = result.tool_calls[0]["arguments"]
-        self.assertEqual(arguments["mode"], "single_database_agent")
-        self.assertNotIn("instruction", arguments)
-        self.assertEqual(result.workflow_mode, "single_database_agent")
+        self.assertEqual(arguments["mode"], "query_agent")
+        self.assertEqual(arguments["transport"], "direct")
+        self.assertEqual(result.workflow_mode, "query_agent")
         self.assertIn("销售目标", result.columns)
         self.assertIn("目标完成率", result.columns)
         self.assertTrue(result.rows)
@@ -609,7 +593,9 @@ class AskDataServiceTest(unittest.TestCase):
         result = service.submit("查询本月各地区销售额", "failure-session")
 
         self.assertEqual(result.status, "failed")
-        self.assertEqual(result.execution_log[0]["stage"], "single_database_agent")
+        stages = [item["stage"] for item in result.execution_log]
+        self.assertEqual(stages[0], "query.schema_loaded")
+        self.assertEqual(stages[-1], "query.failed")
         self.assertIn("SQL生成模型测试失败", result.analysis)
         self.assertIsNone(result.sql)
 
@@ -643,8 +629,9 @@ class AskDataServiceTest(unittest.TestCase):
         self.assertEqual(result.status, "failed")
         self.assertIn("missing_column", result.sql)
         stages = [item["stage"] for item in result.execution_log]
-        self.assertEqual(stages[-1], "execute_duckdb")
-        self.assertNotIn("repair_and_retry", stages)
+        self.assertEqual(stages[-1], "query.failed")
+        self.assertIn("query.sql_repair", stages)
+        self.assertNotIn("mcp_tool_call", stages)
         self.assertIn("missing_column", result.analysis)
 
 

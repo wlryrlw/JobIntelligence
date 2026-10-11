@@ -313,7 +313,7 @@ async def resume_crawl_run(run_id: str, user: AuthUser = Depends(require_user)) 
 def mcp_tools(
     user: AuthUser = Depends(require_user),
 ) -> list[dict]:
-    """查看模型可用的MCP工具及其输入输出Schema。"""
+    """查看当前用户可用的数据库MCP工具及其输入输出Schema。"""
     return service.list_mcp_tools(user.user_id)
 
 

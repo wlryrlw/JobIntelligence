@@ -71,6 +71,9 @@ class AuthServiceTest(unittest.TestCase):
             tool_names = {item["name"] for item in mock_tools}
             self.assertIn("query_askdata_mock", tool_names)
             self.assertNotIn("query_ecommerce_ops", tool_names)
+            self.assertNotIn("current_datetime", tool_names)
+            self.assertNotIn("resolve_date_range", tool_names)
+            self.assertNotIn("build_bar_chart", tool_names)
 
 
 if __name__ == "__main__":

@@ -49,7 +49,6 @@ class Settings:
     rrf_top_k: int = int(os.getenv("RRF_TOP_K", "40"))
     max_schema_fields: int = int(os.getenv("MAX_SCHEMA_FIELDS", "20"))
     max_saved_memories: int = int(os.getenv("MAX_SAVED_MEMORIES", "20"))
-    mcp_max_tool_calls: int = int(os.getenv("MCP_MAX_TOOL_CALLS", "3"))
     short_term_summary_trigger_tokens: int = int(
         os.getenv("SHORT_TERM_SUMMARY_TRIGGER_TOKENS", "12000")
     )
@@ -121,7 +120,6 @@ class Settings:
             "rrf_top_k": self.rrf_top_k,
             "max_schema_fields": self.max_schema_fields,
             "max_saved_memories": self.max_saved_memories,
-            "mcp_max_tool_calls": self.mcp_max_tool_calls,
             "short_term_memory": {
                 "summary_enabled": self.short_term_summary_enabled,
                 "summary_trigger_tokens": self.short_term_summary_trigger_tokens,

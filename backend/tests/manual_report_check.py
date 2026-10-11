@@ -7,10 +7,8 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from app.config import settings
-from app.mcp_runtime import LocalMcpClient, create_local_mcp_server
 from app.model_client import ModelClient
 from app.querying.data_qa_agent import DataQaAgent
-from app.security import AccessController
 from app.skills import SkillRegistry
 
 
@@ -21,9 +19,6 @@ def main() -> None:
     model = ModelClient(settings)
     agent = DataQaAgent(
         model,
-        lambda scope: LocalMcpClient(
-            create_local_mcp_server(access_scope=AccessController().resolve(scope.get("user_id")))
-        ),
         SkillRegistry().get("data_qa"),
     )
     source = {
@@ -45,7 +40,6 @@ def main() -> None:
             "recent_result": "",
             "selected_tables": json.dumps([source], ensure_ascii=False),
         },
-        AccessController().resolve("demo_analyst").public(),
     )
     if not result.report or not result.report.visualizations:
         raise RuntimeError("模型没有按报告需求选择展示工具")

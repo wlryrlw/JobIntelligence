@@ -98,6 +98,27 @@ class QueryAgent:
                 )
                 return self._failed(query_plan, selected_database, attempts, kind, message, catalog)
 
+            if generated.action == "clarify":
+                clarification = generated.clarification
+                if clarification is None:
+                    raise PipelineStageError(
+                        "query_clarification",
+                        "QueryAgent澄清动作缺少结构化澄清内容",
+                    )
+                self._emit(
+                    event_sink,
+                    QueryEventType.CLARIFICATION,
+                    clarification.model_dump(mode="json"),
+                )
+                return QueryAgentResult(
+                    query=query_plan.query,
+                    database=selected_database,
+                    dataset_version=catalog.dataset_version,
+                    status="waiting_clarification",
+                    clarification=clarification,
+                    schema=catalog,
+                )
+
             sql = generated.sql
             self._emit(
                 event_sink,
@@ -249,10 +270,12 @@ class QueryAgent:
             return SqlGeneration.model_validate(raw)
 
         system = (
-            "你是严格的 NL2SQL 生成器。只能输出 JSON："
-            '{"sql":"一条SELECT或WITH SQL","explanation":"简短说明"}。'
+            "你是严格的 NL2SQL 生成器。只能输出 JSON。信息不足且会改变结果口径时，"
+            "返回 {\"action\":\"clarify\",\"clarification\":{...}}；否则返回 "
+            '{"action":"generate_sql","sql":"一条SELECT或WITH SQL","explanation":"简短说明"}。'
             "SQL 必须只使用下面完整 Schema 中的表和字段，显式列出字段，禁止 SELECT *、"
             "多语句、写操作、文件函数和跨库引用。"
+            "相对日期表达式和已确认参数必须被纳入查询口径；不要再次调用外部工具。"
             + chr(10)
             + catalog.render()
         )
@@ -273,6 +296,8 @@ class QueryAgent:
                 "filters": plan.filters,
                 "metrics": plan.metrics,
                 "dimensions": plan.dimensions,
+                "time_expressions": plan.time_expressions,
+                "confirmed_parameters": plan.confirmed_parameters,
             }
         payload = self.model_client.chat_json(
             system, json.dumps(user_payload, ensure_ascii=False)

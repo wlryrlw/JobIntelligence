@@ -74,10 +74,9 @@ export interface CoderToolCall {
   call_index: number
   database: string
   arguments: DatabaseHandoff | {
-    mode: "single_database_agent"
-    transport: "mcp_in_process"
-    tool_name?: string
-    schema_graph_version?: string
+    mode: "query_agent"
+    transport: "direct"
+    schema_catalog_version?: string | null
     sql_source?: string
   }
   sql: string

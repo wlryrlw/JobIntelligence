@@ -4,7 +4,28 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from typing import Any
 
-from ..models import ChartSpec
+from ..models import ChartSpec, VisualizationSpec
+
+
+_VISUALIZATION_TYPES = {
+    "build_bar_chart": "bar",
+    "build_pie_chart": "pie",
+    "build_line_chart": "line",
+    "build_histogram_chart": "histogram",
+}
+
+
+def build_visualization_spec(
+    action: str,
+    arguments: Mapping[str, Any],
+) -> VisualizationSpec:
+    """在本地构造并校验报告图表契约，不经过 MCP 或数据库。"""
+
+    chart_type = _VISUALIZATION_TYPES.get(action)
+    if chart_type is None:
+        raise ValueError(f"不支持的本地展示动作：{action}")
+    payload = {**dict(arguments), "type": chart_type}
+    return VisualizationSpec.model_validate(payload)
 
 
 def chart_spec_to_echarts(
@@ -93,4 +114,4 @@ def _number(value: Any) -> float | int | None:
 
 to_echarts_option = chart_spec_to_echarts
 
-__all__ = ["chart_spec_to_echarts", "to_echarts_option"]
+__all__ = ["build_visualization_spec", "chart_spec_to_echarts", "to_echarts_option"]

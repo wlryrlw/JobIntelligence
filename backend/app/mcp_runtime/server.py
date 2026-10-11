@@ -6,15 +6,7 @@ from mcp.types import ToolAnnotations
 from ..database import SCHEMA, physical_table_name
 from ..querying.duckdb_engine import DuckDbEngine
 from ..security import AccessController, AccessScope
-from .tools import (
-    build_bar_chart,
-    build_database_query_tool,
-    build_histogram_chart,
-    build_line_chart,
-    build_pie_chart,
-    current_datetime,
-    resolve_date_range,
-)
+from .tools import build_database_query_tool
 
 
 READ_ONLY = ToolAnnotations(
@@ -35,52 +27,9 @@ def create_local_mcp_server(
     server = MCPServer(
         name="askdata-local-tools",
         title="AskData本地工具服务",
-        description="提供本地数据库只读查询和基础时间计算工具。",
+        description="提供按用户权限隔离的本地数据库只读查询工具。",
         instructions="调用数据库工具前先根据Schema图生成一条只读DuckDB SQL。",
     )
-
-    server.tool(
-        name="current_datetime",
-        title="获取当前日期时间",
-        description="获取Asia/Shanghai或UTC时区的当前日期与时间。",
-        annotations=READ_ONLY,
-    )(current_datetime)
-    server.tool(
-        name="resolve_date_range",
-        title="解析相对日期范围",
-        description="将今天、昨天、本周、上周、本月、上月或今年转换为明确起止日期。",
-        annotations=READ_ONLY,
-    )(resolve_date_range)
-    server.tool(
-        name="build_bar_chart",
-        title="生成柱状图配置",
-        description=(
-            "基于一张已有查询结果生成前端柱状图配置。"
-            "适合比较不同类别的数值，不读取数据库，也不生成模拟数据。"
-        ),
-        annotations=READ_ONLY,
-    )(build_bar_chart)
-    server.tool(
-        name="build_pie_chart",
-        title="生成饼图配置",
-        description=(
-            "基于一张已有查询结果生成前端饼图配置。"
-            "只适合类别较少的占比分析，不读取数据库，也不生成模拟数据。"
-        ),
-        annotations=READ_ONLY,
-    )(build_pie_chart)
-    server.tool(
-        name="build_line_chart",
-        title="生成折线图配置",
-        description="基于已有查询结果生成时间或有序序列的折线图配置。",
-        annotations=READ_ONLY,
-    )(build_line_chart)
-    server.tool(
-        name="build_histogram_chart",
-        title="生成直方图配置",
-        description="基于已有数值查询结果生成分布直方图配置。",
-        annotations=READ_ONLY,
-    )(build_histogram_chart)
 
     databases = sorted({str(table.get("database") or "askdata_mock") for table in SCHEMA})
     for database in databases:

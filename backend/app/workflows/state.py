@@ -29,11 +29,9 @@ class QueryState(TypedDict, total=False):
     schema_context: str
     database_names: list[str]
     clarification: dict[str, Any] | None
-    direct_sql: str
-    sql_source: str
+    dataset_version: str | None
+    prompt_token_count: int | None
     tool_facts: dict[str, Any]
-    mcp_execution: dict[str, Any]
-    mcp_tool_trace: list[dict[str, Any]]
     execution_log: list[dict[str, Any]]
     tool_calls: list[dict[str, Any]]
     workflow_mode: str

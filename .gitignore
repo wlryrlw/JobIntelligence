@@ -56,3 +56,5 @@ backend/data/local/
 
 # ETL output contains local job descriptions and evidence
 data/databases/
+
+/docs/

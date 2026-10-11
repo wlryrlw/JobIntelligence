@@ -32,6 +32,12 @@ class McpRuntimeTest(unittest.TestCase):
         self.assertEqual(database_tool["input_schema"]["required"], ["sql"])
         self.assertIn("success", database_tool["output_schema"]["properties"])
         self.assertTrue(database_tool["annotations"]["readOnlyHint"])
+        self.assertNotIn("current_datetime", by_name)
+        self.assertNotIn("resolve_date_range", by_name)
+        self.assertNotIn("build_bar_chart", by_name)
+        self.assertNotIn("build_pie_chart", by_name)
+        self.assertNotIn("build_line_chart", by_name)
+        self.assertNotIn("build_histogram_chart", by_name)
 
     def test_database_tool_executes_read_only_sql(self) -> None:
         result = self.client.call_tool(
@@ -47,32 +53,6 @@ class McpRuntimeTest(unittest.TestCase):
         self.assertTrue(result["success"])
         self.assertEqual(result["database"], "askdata_mock")
         self.assertEqual(result["row_count"], 4)
-
-    def test_time_tool_returns_explicit_date_range(self) -> None:
-        result = self.client.call_tool(
-            "resolve_date_range",
-            {"expression": "本月", "timezone_name": "Asia/Shanghai"},
-        )
-
-        self.assertRegex(result["start_date"], r"^\d{4}-\d{2}-01$")
-        self.assertRegex(result["end_date"], r"^\d{4}-\d{2}-\d{2}$")
-        self.assertEqual(result["timezone"], "Asia/Shanghai")
-
-    def test_presentation_tool_returns_frontend_spec_without_data(self) -> None:
-        result = self.client.call_tool(
-            "build_bar_chart",
-            {
-                "title": "各地区销售额",
-                "source_task_id": "task-1",
-                "category_field": "销售地区",
-                "value_field": "销售额",
-                "max_items": 8,
-            },
-        )
-
-        self.assertEqual(result["type"], "bar")
-        self.assertEqual(result["source_task_id"], "task-1")
-        self.assertNotIn("rows", result)
 
     def test_database_tool_is_hidden_for_user_without_database_access(self) -> None:
         scope = AccessController().resolve("unknown-user")

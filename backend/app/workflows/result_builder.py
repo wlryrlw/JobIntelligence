@@ -113,14 +113,14 @@ class ResultBuilder:
             if any(term in column for term in ("额", "数", "率", "平均", "目标"))
         ]
         dimension_columns = [column for column in combined.columns if column not in metric_columns]
-        mode = str(state.get("workflow_mode") or "single_database_agent")
+        mode = str(state.get("workflow_mode") or "query_agent")
         steps = [
             "一次预处理：上下文聚合、问答/问数路由、检索词提取",
             *([f"独立查询改写：{state.get('standalone_query')}"] if state.get("rewritten") else []),
             "BM25与Dense召回，经RRF融合和Rerank阈值筛选",
             f"构建Schema图：{len(graph.get('tables', []))}张表 / {len(graph.get('fields', []))}个字段",
-            "单库智能体选择MCP工具并生成SQL" if mode == "single_database_agent" else "多库路径：按数据库生成Handoff",
-            "通过MCP数据库工具调用DuckDB并整理结果",
+            "QueryAgent根据SchemaCatalog生成SQL",
+            "AccessScope校验、SQLGlot只读校验并执行DuckDB",
         ]
         if state.get("analysis_sources"):
             steps.append(f"综合分析{len(state['analysis_sources'])}张用户指定历史表")
@@ -153,6 +153,8 @@ class ResultBuilder:
             standalone_query=state.get("standalone_query"),
             schema_graph=graph,
             workflow_mode=mode,
+            dataset_version=state.get("dataset_version"),
+            prompt_token_count=state.get("prompt_token_count"),
         )
 
     @staticmethod
@@ -169,7 +171,7 @@ class ResultBuilder:
             execution_log=log,
             standalone_query=state.get("standalone_query"),
             schema_graph=state.get("schema_graph"),
-            workflow_mode=str(state.get("workflow_mode") or "single_database_agent"),
+            workflow_mode=str(state.get("workflow_mode") or "query_agent"),
         )
 
     @staticmethod

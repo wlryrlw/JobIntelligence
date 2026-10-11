@@ -3,13 +3,13 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass, field
 from fnmatch import fnmatch
-from typing import Any, Callable
+from typing import Any
 
 from ..errors import PipelineStageError
-from ..mcp_runtime import LocalMcpClient
 from ..model_client import ModelClient
 from ..models import AnalysisReport, VisualizationSpec
 from ..skills import SkillDefinition
+from .charting import build_visualization_spec
 
 
 @dataclass
@@ -26,23 +26,19 @@ class DataQaAgent:
     def __init__(
         self,
         model_client: ModelClient,
-        mcp_client_factory: Callable[[dict[str, Any]], LocalMcpClient],
         skill: SkillDefinition,
     ) -> None:
         self.model_client = model_client
-        self.mcp_client_factory = mcp_client_factory
         self.skill = skill
 
     def run(
         self,
         query: str,
         contexts: dict[str, str],
-        access_scope: dict[str, Any],
     ) -> DataQaResult:
-        client = self.mcp_client_factory(access_scope)
         tools = [
-            tool for tool in client.list_tools()
-            if self._tool_allowed(str(tool.get("name") or ""))
+            {"name": name}
+            for name in self._presentation_actions()
         ]
         source_catalog = self._source_catalog(contexts)
         system = (
@@ -66,7 +62,7 @@ class DataQaAgent:
         )
         try:
             payload = self.model_client.chat_json(system, user)
-            return self._execute(payload, client, source_catalog)
+            return self._execute(payload, source_catalog)
         except PipelineStageError:
             raise
         except (RuntimeError, ValueError, KeyError, TypeError) as exc:
@@ -75,7 +71,6 @@ class DataQaAgent:
     def _execute(
         self,
         payload: dict[str, Any],
-        client: LocalMcpClient,
         source_catalog: dict[str, dict[str, Any]],
     ) -> DataQaResult:
         action = str(payload.get("action") or "")
@@ -112,8 +107,7 @@ class DataQaAgent:
             if not self._tool_allowed(name) or not isinstance(arguments, dict):
                 raise ValueError(f"展示工具调用不合法：{name or '空'}")
             self._validate_chart_source(arguments, source_catalog)
-            result = client.call_tool(name, arguments)
-            visualization = VisualizationSpec.model_validate(result)
+            visualization = build_visualization_spec(name, arguments)
             visualizations.append(visualization)
             traces.append({
                 "call_index": index,
@@ -135,11 +129,24 @@ class DataQaAgent:
         )
 
     def _tool_allowed(self, name: str) -> bool:
-        # 阶段二新增的图表类型保持向后兼容：旧 Skill 配置仍可继续运行，
-        # 但 Query/Data QA 的工具目录会同时暴露 line 和 histogram。
+        # 阶段二新增的展示动作保持向后兼容：旧 Skill 配置仍可继续运行，
+        # 但 Data QA 的本地展示目录会同时暴露 line 和 histogram。
         if name in {"build_line_chart", "build_histogram_chart"}:
             return True
         return any(fnmatch(name, pattern) for pattern in self.skill.allowed_tools)
+
+    def _presentation_actions(self) -> list[str]:
+        actions = {
+            name
+            for name in (
+                "build_bar_chart",
+                "build_pie_chart",
+                "build_line_chart",
+                "build_histogram_chart",
+            )
+            if self._tool_allowed(name)
+        }
+        return sorted(actions)
 
     @staticmethod
     def _source_catalog(contexts: dict[str, str]) -> dict[str, dict[str, Any]]:

@@ -380,9 +380,9 @@ class AskDataService:
         ]
 
     def list_mcp_tools(self, user_id: str | None = None) -> list[dict[str, Any]]:
-        """返回与模型看到的内容一致的MCP工具定义。"""
+        """返回当前用户可用的数据库 MCP 工具定义。"""
         scope = self.access_controller.resolve(user_id)
-        return self.workflow.mcp_client(scope.public()).list_tools()
+        return self.workflow.database_mcp_client(scope.public()).list_tools()
 
     def list_skills(self) -> list[dict[str, Any]]:
         """返回当前启用的应用级Skill配置。"""
