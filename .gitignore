@@ -41,6 +41,7 @@ backend/data/schema_store.json
 backend/data/schema_index_local_test.json
 data/local/
 backend/data/local/
+eval/results/
 **/job-result/
 
 # Editor and operating-system files

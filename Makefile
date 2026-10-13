@@ -1,4 +1,4 @@
-.PHONY: setup test eval eval-ablation backend frontend
+.PHONY: setup test eval eval-smoke eval-ablation eval-judge backend frontend
 
 setup:
 	uv sync
@@ -8,10 +8,16 @@ test:
 	uv run pytest
 
 eval:
-	uv run python -m eval.runner --dataset eval_test --output data/local/eval/eval_test.json
+	uv run python -m eval.runner --dataset eval_test
+
+eval-smoke:
+	uv run python -m eval.runner --dataset seed --suite smoke
 
 eval-ablation:
-	uv run python -m eval.runner --dataset eval_test --ablation --output data/local/eval/ablation.json
+	uv run python -m eval.runner --dataset eval_test --ablation
+
+eval-judge:
+	uv run python -m eval.judge_runner --dataset eval_test --mode reference
 
 backend:
 	uv run python backend/run.py
