@@ -294,6 +294,12 @@ class QueryAgent:
             '{"action":"generate_sql","sql":"一条SELECT或WITH SQL","explanation":"简短说明"}。'
             "SQL 必须只使用下面完整 Schema 中的表和字段，显式列出字段，禁止 SELECT *、"
             "多语句、写操作、文件函数和跨库引用。"
+            "skills、tags、welfare、job_details.skill_tags 是 VARCHAR 中保存的 JSON 数组文本，不是 DuckDB LIST；"
+            "判断数组包含项时优先使用 json_contains(lower(字段), '\"python\"')；"
+            "确需展开数组时使用 unnest(from_json(字段, '[\"VARCHAR\"]'))；"
+            "禁止使用 from_json 或 json_transform 的结构参数 'VARCHAR[]'。"
+            "薪资分布优先使用已解析的 salary_min_k、salary_max_k、salary_period 和 salary_parse_status，"
+            "不要重新解析 salary_raw。"
             "相对日期表达式和已确认参数必须被纳入查询口径；不要再次调用外部工具。"
             + chr(10)
             + catalog.render()

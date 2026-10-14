@@ -16,10 +16,9 @@ logger = logging.getLogger(__name__)
 
 
 @dataclass
-class RetrievalIntent:
-    """Schema 检索参数。"""
+class QueryExtraction:
+    """供 QueryAgent 生成 SQL 的结构化查询口径。"""
 
-    retrieval_terms: list[str] = field(default_factory=list)
     metrics: list[str] = field(default_factory=list)
     dimensions: list[str] = field(default_factory=list)
     filters: list[str] = field(default_factory=list)
@@ -39,7 +38,7 @@ class PreparedRequest:
     reason: str
     standalone_query: str = ""
     rewritten: bool = False
-    retrieval: RetrievalIntent = field(default_factory=RetrievalIntent)
+    extraction: QueryExtraction = field(default_factory=QueryExtraction)
     response: str = ""
     response_type: ResponseType = "answer"
     target: TargetJobRequest | None = None
@@ -48,7 +47,7 @@ class PreparedRequest:
 
 
 class RequestPreprocessor:
-    """一次调用完成上下文聚合、意图判断、检索词提取或直接回复。"""
+    """一次调用完成上下文聚合、意图判断、查询口径提取或直接回复。"""
 
     def __init__(self, model_client: ModelClient) -> None:
         self.model_client = model_client
@@ -75,8 +74,8 @@ class RequestPreprocessor:
    意图判断，则直接提出一个简短的自然语言问题。不要生成选项，不要假装已经查询数据。
 
 上下文聚合：只在当前问题依赖上文时理解和补全语义，不要拼接无关历史。
-仅当action=database_query时，将问题改写为可独立理解的standalone_query，并提取字段级
-Schema检索信息。data_qa和direct_response不提取Schema信息。
+仅当action=database_query时，将问题改写为可独立理解的standalone_query，并提取生成SQL所需的
+指标、维度、过滤条件、时间表达式和操作。data_qa和direct_response不提取查询口径。
 
 只返回JSON：
 {
@@ -87,16 +86,15 @@ Schema检索信息。data_qa和direct_response不提取Schema信息。
   "rewritten":false,
   "response":"仅direct_response填写自然语言回答或澄清问题",
   "response_type":"answer|clarification",
-  "retrieval":{
-    "retrieval_terms":["用于BM25和Embedding的简短Schema检索词，不要写完整句子"],
+  "query_extraction":{
     "metrics":[], "dimensions":[], "filters":[],
     "time_expressions":[], "operations":[]
   }
 }
-database_query必须填写standalone_query和retrieval，response为空。
+database_query必须填写standalone_query和query_extraction，response为空。
 career_advice可以提供target（keyword/city/company/experience/degree）和resume_id。
-data_qa必须清空standalone_query、response和retrieval。
-direct_response必须填写response，并清空standalone_query和retrieval。不要猜表名。"""
+data_qa必须清空standalone_query、response和query_extraction。
+direct_response必须填写response，并清空standalone_query和query_extraction。不要猜表名。"""
         user = f"当前问题：{query}\n近期轻量上下文：{recent_context or '无'}"
         try:
             payload = self.model_client.chat_json(system, user)
@@ -127,7 +125,7 @@ direct_response必须填写response，并清空standalone_query和retrieval。�
                     confidence=decision.confidence,
                     reason="问题包含岗位市场数据诉求，但当前没有可供解读的历史结果，已转为查询最新岗位数据",
                     standalone_query=query.strip()[:800],
-                    retrieval=RetrievalIntent(),
+                    extraction=QueryExtraction(),
                 )
             return decision
         except (ValueError, KeyError, TypeError) as exc:
@@ -171,9 +169,10 @@ direct_response必须填写response，并清空standalone_query和retrieval。�
             )
 
         standalone = str(payload.get("standalone_query") or original_query).strip()[:800]
-        raw = payload.get("retrieval") if isinstance(payload.get("retrieval"), dict) else {}
-        retrieval = RetrievalIntent(
-            retrieval_terms=self._strings(raw.get("retrieval_terms")),
+        raw = payload.get("query_extraction")
+        if not isinstance(raw, dict):
+            raw = payload.get("extraction") if isinstance(payload.get("extraction"), dict) else {}
+        extraction = QueryExtraction(
             metrics=self._strings(raw.get("metrics")),
             dimensions=self._strings(raw.get("dimensions")),
             filters=self._strings(raw.get("filters")),
@@ -186,7 +185,7 @@ direct_response必须填写response，并清空standalone_query和retrieval。�
             reason=reason,
             standalone_query=standalone,
             rewritten=bool(payload.get("rewritten", standalone != original_query.strip())),
-            retrieval=retrieval,
+            extraction=extraction,
         )
 
     @staticmethod

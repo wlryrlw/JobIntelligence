@@ -6,7 +6,7 @@ from typing import Any
 
 from langgraph.types import Command
 
-from ..config import settings
+from ..config import Settings, settings
 from ..crawling import CrawlRequest, CrawlRunManager, parse_crawl_intent
 from ..database import SCHEMA
 from ..contracts import TargetJobRequest
@@ -23,7 +23,6 @@ from ..query_runtime import (
     query_runtime,
 )
 from ..querying.column_labels import column_labels
-from ..retrieval import SchemaIndex
 from ..security import AccessController
 from ..workflows.query_graph import QueryWorkflow
 from .memory_store import MemoryStore
@@ -36,16 +35,15 @@ class OfferAgentService:
     def __init__(
         self,
         model_client: ModelClient | None = None,
-        schema_index: SchemaIndex | None = None,
+        config: Settings | None = None,
         crawl_manager: CrawlRunManager | None = None,
     ) -> None:
         self.model_client = model_client or ModelClient(settings)
-        self.schema_index = schema_index or SchemaIndex(self.model_client, settings)
-        self.config = self.schema_index.config
+        self.config = config or getattr(self.model_client, "config", settings)
         self.access_controller = AccessController()
         self.context = SessionContext(self.model_client, self.config)
         self.memories = MemoryStore(limit=self.config.max_saved_memories)
-        self.workflow = QueryWorkflow(self.model_client, self.schema_index, self.config)
+        self.workflow = QueryWorkflow(self.model_client, self.config)
         self.schema_catalog = SchemaCatalogBuilder()
         self.query_agent = QueryAgent(self.model_client, catalog_builder=self.schema_catalog)
         self.crawl_manager = crawl_manager or CrawlRunManager()
@@ -487,31 +485,6 @@ class OfferAgentService:
         )
         return result
 
-    def search_schema(
-        self,
-        query: str,
-        threshold: float | None = None,
-        user_id: str | None = None,
-    ) -> dict[str, Any]:
-        prepared = self.workflow.preprocessor.prepare(query, "")
-        extraction = prepared.retrieval
-        retrieval = self.schema_index.retrieve(
-            query,
-            retrieval_terms=extraction.retrieval_terms,
-            threshold=threshold,
-            access_scope=self.access_controller.resolve(user_id),
-        )
-        retrieval["extraction"] = extraction.public()
-        retrieval["schema_graph"] = self.workflow.graph_builder.build(
-            retrieval["hits"],
-            self.access_controller.resolve(user_id),
-        )
-        return retrieval
-
-    def rebuild_schema_index(self) -> dict[str, Any]:
-        self.schema_index.ensure_built(force=True)
-        return self.schema_index.status()
-
     def get_task(self, task_id: str, user_id: str | None = None) -> QueryResult:
         if task_id not in self.tasks:
             raise KeyError(task_id)
@@ -591,10 +564,8 @@ class OfferAgentService:
                 "tool_count": len(self.list_mcp_tools()),
             },
             "skills": [item["name"] for item in self.list_skills()],
-            "schema_index": self.schema_index.status(),
             "schema_catalog": {
                 "mode": "full_prompt",
-                "retrieval": "disabled_for_query_agent",
                 "token_estimate": "characters_div_4",
             },
         }

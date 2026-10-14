@@ -35,6 +35,10 @@ def classify_sql_error(error: str | BaseException | None) -> tuple[SqlErrorKind,
         kind = SqlErrorKind.UNKNOWN_FIELD
     elif any(term in lowered for term in ("table", "relation", "数据表")):
         kind = SqlErrorKind.UNKNOWN_TABLE
+    elif any(term in lowered for term in (
+        "malformed json", "invalid input error", "json structure", "json transform",
+    )):
+        kind = SqlErrorKind.TYPE_BINDING
     elif any(term in lowered for term in ("type", "cannot cast", "conversion", "类型")):
         kind = SqlErrorKind.TYPE_BINDING
     elif any(term in lowered for term in ("syntax", "parser", "parse error", "unexpected token", "语法")):

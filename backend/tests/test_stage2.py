@@ -5,7 +5,7 @@ import csv
 from datetime import datetime, timezone
 from pathlib import Path
 
-from app.contracts import QueryPlan, SqlErrorKind
+from app.contracts import QueryPlan, SqlErrorKind, TargetJobRequest, UserRequest
 from app.coordinator import Coordinator
 from app.models import ChartSpec
 from app.querying.charting import chart_spec_to_echarts
@@ -60,6 +60,41 @@ def test_query_agent_repairs_unknown_field_and_emits_bounded_events():
     assert len(model.calls) == 2
 
 
+def test_query_agent_repairs_malformed_json_array_type() -> None:
+    model = FakeModel([
+        {
+            "sql": (
+                "SELECT salary_min_k, salary_max_k, COUNT(*) AS job_count "
+                "FROM jobs "
+                "WHERE list_contains(from_json(skills, 'VARCHAR[]'), 'Python') "
+                "GROUP BY salary_min_k, salary_max_k ORDER BY salary_min_k"
+            )
+        },
+        {
+            "sql": (
+                "SELECT salary_min_k, salary_max_k, COUNT(*) AS job_count "
+                "FROM jobs "
+                "WHERE list_contains(from_json(skills, '[\"VARCHAR\"]'), 'Python') "
+                "GROUP BY salary_min_k, salary_max_k ORDER BY salary_min_k"
+            )
+        },
+    ])
+    result = QueryAgent(model).run(
+        QueryPlan(query="统计python岗位的薪资分布", database="jobs_market"),
+        access_scope=AccessController().resolve("local_user"),
+    )
+
+    assert result.status == "completed"
+    assert len(result.attempts) == 2
+    assert result.attempts[0].error_kind == SqlErrorKind.TYPE_BINDING
+    assert result.attempts[0].retryable is True
+    assert result.attempts[1].execution == "succeeded"
+    assert len(model.calls) == 2
+    assert "JSON 数组文本" in model.calls[0][0]
+    assert "[\"VARCHAR\"]" in model.calls[0][0]
+    assert "VARCHAR[]" in model.calls[0][0]
+
+
 def test_query_agent_does_not_retry_security_error():
     model = FakeModel([{"sql": "SELECT * FROM jobs"}])
     result = QueryAgent(model).run(
@@ -112,6 +147,75 @@ def test_chart_specs_map_to_deterministic_echarts_options():
     )
     assert histogram["series"][0]["type"] == "bar"
     assert sum(histogram["series"][0]["data"]) == 2
+
+
+def test_career_advice_accepts_matching_historical_published_data(tmp_path: Path):
+    folder = tmp_path / "jobs_market"
+    folder.mkdir()
+    with (folder / "crawl_runs.csv").open("w", newline="", encoding="utf-8") as stream:
+        writer = csv.DictWriter(stream, fieldnames=[
+            "run_id", "keyword", "city", "status", "dataset_version", "finished_at", "started_at"
+        ])
+        writer.writeheader()
+        writer.writerow({
+            "run_id": "run-old", "keyword": "Python 工程师", "city": "上海",
+            "status": "succeeded", "dataset_version": "ds-old",
+            "finished_at": "2026-09-01T00:00:00+00:00", "started_at": "2026-08-31T00:00:00+00:00",
+        })
+
+    coordinator = Coordinator(folder, freshness_days=7)
+    target = TargetJobRequest(keyword="Python 工程师", city="上海")
+    now = datetime(2026, 9, 19, tzinfo=timezone.utc)
+
+    stale_for_query = coordinator.inspect_dataset(target, now=now)
+    assert stale_for_query.available is False
+
+    decision = coordinator.decide(
+        UserRequest(
+            task_id="career-task",
+            text="分析上海 Python 工程师岗位和我的技能缺口",
+            resume_id="resume_123456",
+            target=target,
+        ),
+        action="career_advice",
+        now=now,
+    )
+    assert decision.action == "career_advice"
+    assert decision.availability is not None
+    assert decision.availability.available is True
+    assert "全部已有数据" in decision.availability.reason
+
+
+def test_career_advice_matches_all_published_data_without_batch_match(tmp_path: Path):
+    folder = tmp_path / "jobs_market"
+    folder.mkdir()
+    with (folder / "crawl_runs.csv").open("w", newline="", encoding="utf-8") as stream:
+        writer = csv.DictWriter(stream, fieldnames=[
+            "run_id", "keyword", "city", "status", "dataset_version", "finished_at", "started_at"
+        ])
+        writer.writeheader()
+        writer.writerow({
+            "run_id": "run-agent-shanghai", "keyword": "agent", "city": "上海",
+            "status": "succeeded", "dataset_version": "ds-agent",
+            "finished_at": "2026-08-01T00:00:00+00:00", "started_at": "2026-07-31T00:00:00+00:00",
+        })
+
+    coordinator = Coordinator(folder, freshness_days=7)
+    decision = coordinator.decide(
+        UserRequest(
+            task_id="career-task",
+            text="分析杭州 Agent 开发工程师岗位和我的技能缺口",
+            resume_id="resume_123456",
+            target=TargetJobRequest(keyword="Agent 开发工程师", city="杭州"),
+        ),
+        action="career_advice",
+        now=datetime(2026, 10, 13, tzinfo=timezone.utc),
+    )
+
+    assert decision.action == "career_advice"
+    assert decision.availability is not None
+    assert decision.availability.available is True
+    assert "全部已有数据" in decision.availability.reason
 
 
 def test_coordinator_requires_city_before_resource_gate():

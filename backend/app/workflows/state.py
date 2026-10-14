@@ -24,10 +24,8 @@ class QueryState(TypedDict, total=False):
     target: dict[str, Any] | None
     resume_id: str | None
     extraction: dict[str, Any]
-    retrieval: dict[str, Any]
-    schema_graph: dict[str, Any]
     schema_context: str
-    database_names: list[str]
+    schema_tables: list[dict[str, str]]
     clarification: dict[str, Any] | None
     dataset_version: str | None
     prompt_token_count: int | None

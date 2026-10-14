@@ -1,9 +1,6 @@
 import unittest
-import tempfile
-from pathlib import Path
 
 from app.config import Settings
-from app.retrieval import SchemaIndex
 from app.service import OfferAgentService
 
 
@@ -16,17 +13,8 @@ class ModelStub:
 
 class OfferAgentServiceTest(unittest.TestCase):
     def setUp(self) -> None:
-        self.temp_dir = tempfile.TemporaryDirectory()
         model = ModelStub()
-        index = SchemaIndex(
-            model,
-            Settings(),
-            index_path=Path(self.temp_dir.name) / "schema.json",
-        )
-        self.service = OfferAgentService(model, index)
-
-    def tearDown(self) -> None:
-        self.temp_dir.cleanup()
+        self.service = OfferAgentService(model, config=Settings())
 
     def test_service_and_visible_schema_are_offeragent_job_domain(self) -> None:
         schema = self.service.visible_schema("demo_candidate")

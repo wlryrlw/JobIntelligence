@@ -105,6 +105,53 @@ class Coordinator:
             degree=degree,
         )
 
+    def inspect_published_dataset(
+        self,
+        target: TargetJobRequest,
+        *,
+        now: datetime | None = None,
+    ) -> DatasetAvailability:
+        """检查当前发布快照；简历分析不要求采集批次元数据与目标完全一致。"""
+
+        now = now or datetime.now(timezone.utc)
+        if now.tzinfo is None:
+            now = now.replace(tzinfo=timezone.utc)
+        folder = self._market_folder()
+        path = folder / "crawl_runs.csv"
+        if not path.exists():
+            return DatasetAvailability(
+                available=False,
+                reason="当前没有可用的已发布岗位数据",
+                keyword=target.keyword,
+                city=target.city,
+            )
+
+        candidates: list[dict[str, str]] = []
+        with path.open(newline="", encoding="utf-8") as stream:
+            for row in csv.DictReader(stream):
+                if row.get("status") == "succeeded" and row.get("dataset_version"):
+                    candidates.append(row)
+        if not candidates:
+            return DatasetAvailability(
+                available=False,
+                reason="当前没有可用的已发布岗位数据",
+                keyword=target.keyword,
+                city=target.city,
+            )
+
+        latest = max(candidates, key=lambda row: self._parse_time(row.get("finished_at") or row.get("started_at")))
+        finished = self._parse_time(latest.get("finished_at") or latest.get("started_at"))
+        age = max(0.0, (now - finished).total_seconds() / 86400)
+        return DatasetAvailability(
+            available=True,
+            reason="将在当前已发布岗位库的全部已有数据中匹配目标岗位",
+            dataset_version=latest["dataset_version"],
+            run_id=latest.get("run_id"),
+            age_days=age,
+            keyword=target.keyword,
+            city=target.city,
+        )
+
     def inspect_dataset(
         self,
         target: TargetJobRequest,
@@ -205,7 +252,11 @@ class Coordinator:
                 ),
                 reason="缺少简历",
             )
-        availability = self.inspect_dataset(target, now=now)
+        availability = (
+            self.inspect_published_dataset(target, now=now)
+            if action == "career_advice"
+            else self.inspect_dataset(target, now=now)
+        )
         if not availability.available:
             return RouteDecision(
                 action="request_crawl",

@@ -18,7 +18,6 @@ from ..career import (
     ResumeStoreError,
 )
 from ..coordinator import Coordinator
-from ..database import DATABASE_LABELS, DEFAULT_DATABASE, SCHEMA
 from ..errors import PipelineStageError
 from ..mcp_runtime import LocalMcpClient, create_local_mcp_server
 from ..model_client import ModelClient
@@ -31,7 +30,6 @@ from ..querying.models import SqlExecution
 from ..querying.response_generator import ResponseGenerator
 from ..querying.query_agent import QueryAgent
 from ..querying.schema_catalog import SchemaCatalogBuilder
-from ..retrieval import SchemaGraphBuilder, SchemaIndex
 from ..security import AccessScope
 from ..skills import SkillRegistry
 from .result_builder import ResultBuilder
@@ -44,17 +42,14 @@ class QueryWorkflow:
     def __init__(
         self,
         model_client: ModelClient,
-        schema_index: SchemaIndex | None = None,
         config: Settings | None = None,
     ) -> None:
         self.model_client = model_client
         self.config = config or settings
         self.database_engine = DuckDbEngine()
         self.coordinator = Coordinator(dataset_root=self.database_engine.database_root)
-        self.schema_index = schema_index or SchemaIndex(model_client, self.config)
         self.preprocessor = RequestPreprocessor(model_client)
         self.skills = SkillRegistry()
-        self.graph_builder = SchemaGraphBuilder()
         self.query_agent = QueryAgent(
             model_client,
             self.database_engine,
@@ -92,9 +87,7 @@ class QueryWorkflow:
         builder.add_node("answer_qa", self._answer_qa)
         builder.add_node("coordinate_career", self._coordinate_career)
         builder.add_node("query_agent", self._query_agent)
-        builder.add_node("retrieve_schema", self._retrieve_schema)
         builder.add_node("human_clarification", self._human_clarification)
-        builder.add_node("run_multi_database", self._run_multi_database)
         builder.add_edge(START, "preprocess")
         builder.add_conditional_edges(
             "preprocess",
@@ -104,27 +97,12 @@ class QueryWorkflow:
                 "answer_qa": "answer_qa",
                 "coordinate_career": "coordinate_career",
                 "query_agent": "query_agent",
-                "retrieve_schema": "retrieve_schema",
             },
         )
         builder.add_edge("respond_directly", END)
         builder.add_edge("answer_qa", END)
         builder.add_edge("coordinate_career", END)
-        builder.add_conditional_edges(
-            "retrieve_schema",
-            self._after_retrieval,
-            {
-                "human_clarification": "human_clarification",
-                "query_agent": "query_agent",
-                "run_multi_database": "run_multi_database",
-            },
-        )
-        builder.add_edge("human_clarification", "retrieve_schema")
-        builder.add_conditional_edges(
-            "run_multi_database",
-            lambda state: "human_clarification" if state.get("clarification") else "end",
-            {"human_clarification": "human_clarification", "end": END},
-        )
+        builder.add_edge("human_clarification", "query_agent")
         builder.add_conditional_edges(
             "query_agent",
             lambda state: "human_clarification" if state.get("clarification") else "end",
@@ -153,17 +131,11 @@ class QueryWorkflow:
         if action == "career_advice":
             return "coordinate_career"
         if action == "database_query":
-            allowed = {
-                str(item)
-                for item in (state.get("access_scope") or {}).get("allowed_databases") or []
-            }
-            if allowed == {"jobs_market"}:
-                return "query_agent"
-            return "retrieve_schema"
+            return "query_agent"
         return {"direct_response": "respond_directly", "data_qa": "answer_qa"}[action]
 
     def _preprocess(self, state: QueryState) -> dict[str, Any]:
-        """生成路由、独立查询和 Schema 检索参数。"""
+        """生成路由、独立查询和 SQL 生成所需的查询口径。"""
         decision = self.preprocessor.prepare(
             state["query"],
             state.get("route_context", ""),
@@ -201,7 +173,7 @@ class QueryWorkflow:
             "rewritten": decision.rewritten,
             "target": explicit_target or parsed_target,
             "resume_id": explicit_resume_id or decision.resume_id,
-            "extraction": decision.retrieval.public(),
+            "extraction": decision.extraction.public(),
             "execution_log": execution_log,
         }
 
@@ -238,20 +210,7 @@ class QueryWorkflow:
         }
 
     def _query_agent(self, state: QueryState) -> dict[str, Any]:
-        allowed = {
-            str(item)
-            for item in (state.get("access_scope") or {}).get("allowed_databases") or []
-        }
-        database_names = [str(item) for item in state.get("database_names") or []]
-        database = (
-            database_names[0]
-            if len(database_names) == 1
-            else "jobs_market"
-            if "jobs_market" in allowed
-            else sorted(allowed)[0]
-            if allowed
-            else "jobs_market"
-        )
+        database = self._database_for_query(state)
         execution_log: list[dict[str, Any]] = []
 
         def on_event(event_type: str, payload: dict[str, Any]) -> None:
@@ -305,7 +264,7 @@ class QueryWorkflow:
         )
         result = self.query_agent.run(
             plan,
-            access_scope=self._narrowed_scope(state) if database_names else state.get("access_scope") or {},
+            access_scope=state.get("access_scope") or {},
             event_sink=on_event,
         )
 
@@ -337,6 +296,10 @@ class QueryWorkflow:
             **state,
             "workflow_mode": "query_agent",
             "schema_context": schema_context,
+            "schema_tables": [
+                {"name": table.name, "label": table.label}
+                for table in result.schema.tables
+            ] if result.schema else [],
             "dataset_version": result.dataset_version,
             "prompt_token_count": result.schema.prompt_token_count if result.schema else None,
         }
@@ -442,16 +405,16 @@ class QueryWorkflow:
             availability = decision.availability.model_dump(mode="json") if decision.availability else {}
             result = QueryResult(
                 task_id=state["task_id"],
-                status="waiting_clarification",
+                status="failed",
                 route="career_advice",
-                message="岗位数据不可用，需要先创建采集任务。",
-                analysis=f"{decision.reason}。请先创建独立采集任务，再继续求职分析。",
+                message="当前没有可用的已发布岗位数据。",
+                analysis="当前岗位库中没有可直接用于简历与岗位分析的已发布数据，无法生成岗位画像。",
                 route_reason=decision.reason,
-                steps=["意图路由：career_advice", "检查岗位关键词、城市和数据集新鲜度", "等待独立采集任务完成"],
-                workflow_mode="crawl_required",
+                steps=["意图路由：career_advice", "检查当前已发布岗位库", "没有可用岗位数据，停止分析"],
+                workflow_mode="career_agent_failed",
                 execution_log=[{"stage": "resource_gate", "success": False, "availability": availability}],
             )
-            return {"workflow_mode": "crawl_required", "result": result.model_dump(mode="json")}
+            return {"workflow_mode": "career_agent_failed", "result": result.model_dump(mode="json")}
         availability = decision.availability.model_dump(mode="json") if decision.availability else {}
         resource_log = {"stage": "resource_gate", "success": True, "availability": availability}
         user_id = str((state.get("access_scope") or {}).get("user_id") or "anonymous")
@@ -552,74 +515,18 @@ class QueryWorkflow:
         return {"workflow_mode": "career_agent", "result": result.model_dump(mode="json")}
 
     @staticmethod
-    def _narrowed_scope(state: QueryState) -> AccessScope | dict[str, Any] | None:
-        """用户已选定目标数据库时，将访问范围收窄到该库。"""
-        scope = state.get("access_scope")
-        confirmed_database = str(
+    def _database_for_query(state: QueryState) -> str:
+        confirmed = str(
             (state.get("workspace") or {}).get("confirmed_parameters", {}).get("database")
             or ""
+        ).strip()
+        if confirmed:
+            return confirmed
+        allowed = sorted(
+            str(item)
+            for item in (state.get("access_scope") or {}).get("allowed_databases") or []
         )
-        if not confirmed_database:
-            return scope
-        database_tables = frozenset(
-            table["id"]
-            for table in SCHEMA
-            if str(table.get("database") or DEFAULT_DATABASE) == confirmed_database
-        )
-        if not database_tables:
-            return scope
-        base = scope if isinstance(scope, AccessScope) else AccessScope.from_dict(scope)
-        return AccessScope(
-            user_id=base.user_id,
-            roles=base.roles,
-            allowed_databases=frozenset({confirmed_database}),
-            allowed_tables=database_tables,
-        )
-
-    def _retrieve_schema(self, state: QueryState) -> dict[str, Any]:
-        standalone_query = state["standalone_query"]
-        extraction = state.get("extraction") or {}
-        access_scope = self._narrowed_scope(state)
-        retrieval = self.schema_index.retrieve(
-            standalone_query,
-            retrieval_terms=list(extraction.get("retrieval_terms") or []),
-            access_scope=access_scope,
-        )
-        workspace = state.get("workspace") or {}
-        query_workspace = {
-            "confirmed_schema_tables": list(workspace.get("confirmed_schema_tables") or []),
-            "confirmed_parameters": dict(workspace.get("confirmed_parameters") or {}),
-        }
-        retrieval = self.schema_index.include_workspace(
-            retrieval,
-            query_workspace,
-            access_scope,
-        )
-        retrieval["extraction"] = extraction
-        schema_graph = self.graph_builder.build(
-            retrieval["hits"],
-            access_scope,
-        )
-        retrieval["schema_graph"] = schema_graph
-        databases = sorted({
-            str(table.get("database") or schema_graph.get("database") or DEFAULT_DATABASE)
-            for table in schema_graph.get("tables", [])
-        })
-        return {
-            "standalone_query": standalone_query,
-            "extraction": extraction,
-            "retrieval": retrieval,
-            "schema_graph": schema_graph,
-            "schema_context": self.graph_builder.context_text(schema_graph),
-            "database_names": databases,
-            "clarification": None,
-        }
-
-    @staticmethod
-    def _after_retrieval(state: QueryState) -> str:
-        if state.get("clarification"):
-            return "human_clarification"
-        return "query_agent" if len(state.get("database_names") or []) <= 1 else "run_multi_database"
+        return "jobs_market" if "jobs_market" in allowed else allowed[0] if allowed else "jobs_market"
 
     def _human_clarification(self, state: QueryState) -> dict[str, Any]:
         # LangGraph 将 Command(resume=...) 的值作为 interrupt 返回值。
@@ -628,44 +535,8 @@ class QueryWorkflow:
         workspace = dict(state.get("workspace") or {})
         payload = state.get("clarification") or {}
         parameter = str(payload.get("parameter") or "other")
-        tables = list(workspace.get("confirmed_schema_tables") or [])
-        if any(table["id"] == option_id for table in SCHEMA):
-            tables = list(dict.fromkeys([*tables, option_id]))
-        if parameter == "database" and option_id:
-            database_tables = {
-                table["id"]
-                for table in SCHEMA
-                if str(table.get("database") or DEFAULT_DATABASE) == option_id
-            }
-            tables = [table for table in tables if table in database_tables]
-        workspace["confirmed_schema_tables"] = tables
         workspace["confirmed_parameters"] = {
             **dict(workspace.get("confirmed_parameters") or {}),
             parameter: option_id,
         }
         return {"workspace": workspace, "clarification": None, "result": {}}
-
-    def _run_multi_database(self, state: QueryState) -> dict[str, Any]:
-        """多库命中时请求用户选择目标库，选定后回流检索按单库执行。"""
-        options = []
-        for database in sorted(state.get("database_names") or []):
-            table_count = sum(
-                1
-                for table in SCHEMA
-                if str(table.get("database") or DEFAULT_DATABASE) == database
-            )
-            options.append({
-                "id": database,
-                "label": DATABASE_LABELS.get(database, database),
-                "description": f"共 {table_count} 张表",
-            })
-        clarification = {
-            "parameter": "database",
-            "question": "本次查询的字段涉及多个数据库，请选择目标数据库",
-            "reason": "当前仅支持单库查询，选择后将在该库内完成检索与执行",
-            "options": options,
-        }
-        return {
-            "workflow_mode": "multi_database_clarification",
-            "clarification": clarification,
-        }

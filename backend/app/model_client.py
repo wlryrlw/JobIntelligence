@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-import math
 import re
 import time
 import urllib.error
@@ -14,7 +13,7 @@ from .query_runtime import QueryTimeoutError, current_query_runtime
 
 
 class ModelClient:
-    """Chat、Embedding 和 Rerank 接口客户端。"""
+    """OfferAgent 主模型客户端。"""
 
     def __init__(self, config: Settings | None = None) -> None:
         self.config = config or settings
@@ -67,55 +66,10 @@ class ModelClient:
             except json.JSONDecodeError as exc:
                 raise RuntimeError("大模型未返回有效 JSON") from exc
 
-    def embed(self, texts: list[str]) -> list[list[float]]:
-        if not texts:
-            return []
-        vectors: list[list[float]] = []
-        for start in range(0, len(texts), 10):
-            payload = {
-                "model": self.config.embedding_model,
-                "input": texts[start : start + 10],
-                "dimensions": self.config.embedding_dimensions,
-                "encoding_format": "float",
-            }
-            result = self._post(
-                self.config.embeddings_url,
-                payload,
-                api_key=self.config.effective_embedding_api_key,
-            )
-            items = sorted(result.get("data", []), key=lambda item: item.get("index", 0))
-            vectors.extend(self._normalize(item["embedding"]) for item in items)
-        if len(vectors) != len(texts):
-            raise RuntimeError("Embedding 返回数量与输入不一致")
-        return vectors
-
-    def rerank(self, query: str, documents: list[str], top_n: int) -> list[tuple[int, float]]:
-        if not documents:
-            return []
-        payload = {
-            "model": self.config.rerank_model,
-            "query": query,
-            "documents": documents,
-            "top_n": min(top_n, len(documents)),
-            "instruct": "Rank database schema fields by relevance to the user's analytics query.",
-        }
-        result = self._post(
-            self.config.rerank_url,
-            payload,
-            api_key=self.config.effective_rerank_api_key,
-        )
-        output = [
-            (int(item["index"]), float(item.get("relevance_score", item.get("score", 0))))
-            for item in result.get("results", [])
-        ]
-        return sorted(output, key=lambda item: item[1], reverse=True)
-
-    def _post(
-        self, url: str, payload: dict[str, Any], api_key: str | None = None
-    ) -> dict[str, Any]:
-        key = api_key or self.config.api_key
+    def _post(self, url: str, payload: dict[str, Any]) -> dict[str, Any]:
+        key = self.config.api_key
         if not key:
-            raise RuntimeError("API Key 尚未配置（LLM_API_KEY 或 EMBEDDING/RERANK_API_KEY）")
+            raise RuntimeError("LLM_API_KEY 尚未配置")
         if time.monotonic() < self._blocked_until.get(url, 0):
             raise RuntimeError("模型接口暂时处于30秒熔断窗口，请稍后重试")
         request = urllib.request.Request(
@@ -185,8 +139,3 @@ class ModelClient:
         # 网络请求失败后对当前接口启用短时熔断。
         self._blocked_until[url] = time.monotonic() + 30
         raise RuntimeError(f"模型接口调用失败: {last_error}") from last_error
-
-    @staticmethod
-    def _normalize(vector: list[float]) -> list[float]:
-        norm = math.sqrt(sum(value * value for value in vector)) or 1.0
-        return [float(value) / norm for value in vector]

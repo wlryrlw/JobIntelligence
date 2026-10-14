@@ -13,9 +13,9 @@ class CountingModel:
         if self.action == "data_qa":
             return {
                 "action": "data_qa", "confidence": 0.9, "reason": "分析已有结果",
-                # 验证问答路由会清空 Schema 检索参数。
+                # 验证问答路由会清空查询口径。
                 "standalone_query": "不应保留",
-                "retrieval": {"retrieval_terms": ["岗位", "城市"]},
+                "query_extraction": {"metrics": ["岗位数量"]},
             }
         if self.action == "direct_response":
             if "你是什么大模型" in user:
@@ -36,13 +36,12 @@ class CountingModel:
                 "response": "你希望查询新的岗位数据，还是分析已有的岗位结果？",
                 "response_type": "clarification",
                 "standalone_query": "不应保留",
-                "retrieval": {"retrieval_terms": ["岗位", "城市"]},
+                "query_extraction": {"metrics": ["岗位数量"]},
             }
         return {
             "action": "database_query", "confidence": 0.9, "reason": "需要新数据",
             "standalone_query": "查询上海 Python 岗位", "rewritten": True,
-            "retrieval": {
-                "retrieval_terms": ["城市", "Python", "岗位"],
+            "query_extraction": {
                 "metrics": ["岗位数量"], "dimensions": ["城市"],
                 "filters": [], "time_expressions": ["本月"], "operations": ["汇总"],
             },
@@ -61,15 +60,15 @@ class RequestPreprocessorTest(unittest.TestCase):
         self.assertEqual(model.calls, 1)
         self.assertEqual(result.action, "database_query")
         self.assertEqual(result.standalone_query, "查询上海 Python 岗位")
-        self.assertEqual(result.retrieval.retrieval_terms, ["城市", "Python", "岗位"])
+        self.assertEqual(result.extraction.metrics, ["岗位数量"])
 
-    def test_qa_clears_query_and_retrieval_output(self) -> None:
+    def test_qa_clears_query_extraction(self) -> None:
         model = CountingModel("data_qa")
         result = RequestPreprocessor(model).prepare("解释刚才的结果", "有上一轮结果")
         self.assertEqual(model.calls, 1)
         self.assertEqual(result.action, "data_qa")
         self.assertEqual(result.standalone_query, "")
-        self.assertEqual(result.retrieval.retrieval_terms, [])
+        self.assertEqual(result.extraction.metrics, [])
 
     def test_model_failure_uses_explicit_conservative_fallback(self) -> None:
         result = RequestPreprocessor(FailingModel()).prepare("查询上海 Python 岗位", "")
@@ -92,7 +91,7 @@ class RequestPreprocessorTest(unittest.TestCase):
         self.assertIn("底层大模型", result.response)
         self.assertNotIn("预处理器", result.response)
 
-    def test_gray_zone_is_clarified_by_preprocessor_without_retrieval(self) -> None:
+    def test_gray_zone_is_clarified_by_preprocessor_without_query_extraction(self) -> None:
         model = CountingModel("direct_response")
 
         result = RequestPreprocessor(model).prepare("看看岗位情况", "有一张岗位结果表")
@@ -102,7 +101,7 @@ class RequestPreprocessorTest(unittest.TestCase):
         self.assertEqual(result.response_type, "clarification")
         self.assertIn("查询新的岗位数据", result.response)
         self.assertEqual(result.standalone_query, "")
-        self.assertEqual(result.retrieval.retrieval_terms, [])
+        self.assertEqual(result.extraction.metrics, [])
 
     def test_market_question_without_result_context_cannot_stay_in_data_qa(self) -> None:
         model = CountingModel("data_qa")

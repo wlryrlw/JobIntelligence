@@ -8,7 +8,7 @@ import os
 import sys
 import tempfile
 import time
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from pathlib import Path
 from typing import Protocol
 
@@ -17,6 +17,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "backend"))
 from app.querying.duckdb_engine import DuckDbEngine
 
 from eval.dataset import load_dataset
+from eval.console import localize_console_keys
 from eval.judge import JudgeClient, JudgeConfig
 from eval.judge_models import (
     JudgeCaseResult,
@@ -119,6 +120,38 @@ def _summary(cases: Sequence[JudgeCaseResult]) -> JudgeSummary:
     )
 
 
+def _metrics_for_console(result: JudgeRunResult) -> dict[str, object]:
+    """只输出 Judge 汇总指标，不在控制台展开每个 case 的详细结果。"""
+    payload = result.model_dump(mode="json")
+    payload.pop("cases", None)
+    return localize_console_keys(payload)
+
+
+async def _evaluate_with_progress(
+    judge: JudgeEvaluator,
+    system_prompt: str,
+    payload: dict[str, object],
+    *,
+    progress: Callable[[str], None],
+    progress_message: str,
+) -> JudgeVerdict:
+    """等待外部 Judge API 时定期输出心跳，避免长时间没有可见反馈。"""
+    task = asyncio.create_task(judge.evaluate(system_prompt, payload))
+    waited_seconds = 0
+    try:
+        while True:
+            done, _ = await asyncio.wait((task,), timeout=5)
+            if done:
+                return task.result()
+            waited_seconds += 5
+            progress(
+                f"{progress_message}，Judge API 仍未返回（已等待约 {waited_seconds} 秒）"
+            )
+    except asyncio.CancelledError:
+        task.cancel()
+        raise
+
+
 async def run_judge(
     dataset_name: str,
     *,
@@ -126,19 +159,28 @@ async def run_judge(
     prompt: str,
     config: JudgeConfig,
     evaluator: JudgeEvaluator | None = None,
+    progress: Callable[[str], None] | None = None,
 ) -> JudgeRunResult:
     dataset = load_dataset(dataset_name)
     judge = evaluator or JudgeClient(config)
     system_prompt = _prompt_with_contract(prompt, mode)
     prompt_version = hashlib.sha256(system_prompt.encode("utf-8")).hexdigest()[:12]
     cases: list[JudgeCaseResult] = []
+    total_cases = len(dataset.cases)
+
+    if progress is not None:
+        progress(
+            f"开始 Judge 评测：dataset={dataset.name}，mode={mode}，共 {total_cases} 个 case。"
+        )
 
     with tempfile.TemporaryDirectory(prefix="offeragent-judge-") as temporary:
         database_root = _prepare_database(Path(temporary))
         engine = DuckDbEngine(database_root)
         scope = _scope()
         reference_results: dict[str, dict[str, object]] = {}
-        for case in dataset.cases:
+        for index, case in enumerate(dataset.cases, start=1):
+            if progress is not None:
+                progress(f"[{index}/{total_cases}] 正在调用 Judge：{case.case_id}")
             if mode == "reference":
                 reference = engine.execute("jobs_market", case.expected_sql, scope)
                 if not reference.success:
@@ -169,7 +211,16 @@ async def run_judge(
 
             started = time.perf_counter()
             try:
-                verdict = await judge.evaluate(system_prompt, payload)
+                if progress is None:
+                    verdict = await judge.evaluate(system_prompt, payload)
+                else:
+                    verdict = await _evaluate_with_progress(
+                        judge,
+                        system_prompt,
+                        payload,
+                        progress=progress,
+                        progress_message=f"[{index}/{total_cases}] 正在等待 Judge：{case.case_id}",
+                    )
             except (RuntimeError, TypeError, ValueError) as exc:
                 cases.append(
                     JudgeCaseResult(
@@ -185,6 +236,11 @@ async def run_judge(
                         error=f"{type(exc).__name__}: {_bounded(str(exc), 900)}",
                     )
                 )
+                if progress is not None:
+                    progress(
+                        f"[{index}/{total_cases}] Judge 调用失败：{case.case_id}，"
+                        f"{type(exc).__name__}"
+                    )
                 continue
 
             cases.append(
@@ -205,8 +261,14 @@ async def run_judge(
                     latency_ms=(time.perf_counter() - started) * 1000,
                 )
             )
+            if progress is not None:
+                progress(
+                    f"[{index}/{total_cases}] Judge 完成：{case.case_id}，score={verdict.score}"
+                )
 
     summaries = [_summary(cases)]
+    if progress is not None:
+        progress(f"Judge 评测完成：{len(cases)}/{total_cases} 个 case 已处理。")
     return JudgeRunResult(
         runner_version=JUDGE_RUNNER_VERSION,
         dataset=dataset.name,
@@ -252,19 +314,34 @@ def main(argv: list[str] | None = None) -> int:
         base_url=args.base_url,
         model=args.model,
     )
-    result = asyncio.run(
-        run_judge(
-            args.dataset,
-            mode=mode,
-            prompt=prompt,
-            config=config,
+
+    def report_progress(message: str) -> None:
+        print(message, file=sys.stderr, flush=True)
+
+    try:
+        result = asyncio.run(
+            run_judge(
+                args.dataset,
+                mode=mode,
+                prompt=prompt,
+                config=config,
+                progress=report_progress,
+            )
         )
-    )
+    except KeyboardInterrupt:
+        print(
+            "已取消 Judge 评测；如需快速验证配置，请运行：make eval-judge-smoke",
+            file=sys.stderr,
+            flush=True,
+        )
+        return 130
     encoded = json.dumps(result.model_dump(mode="json"), ensure_ascii=False, indent=2) + "\n"
     output_path = args.output or RESULTS_ROOT / f"judge_{args.dataset}_{args.mode}.json"
     output_path.parent.mkdir(parents=True, exist_ok=True)
     output_path.write_text(encoded, encoding="utf-8")
-    print(f"Judge 评测结果已写入：{output_path}")
+    print("LLM-as-judge 评测指标：")
+    print(json.dumps(_metrics_for_console(result), ensure_ascii=False, indent=2))
+    print(f"完整 Judge 结果已写入：{output_path}")
     return 0
 
 

@@ -7,73 +7,10 @@ export interface ClarificationOption {
   recommended: boolean
 }
 
-export interface SchemaHit {
-  doc_id: string
-  table_id: string
-  table_label: string
-  field_name: string
-  field_label: string
-  score: number
-  source?: "retrieval" | "user_confirmed" | "relation_key"
-  bm25_rank?: number | null
-  dense_rank?: number | null
-  rerank_score?: number
-}
-
-export interface SchemaGraph {
-  database: string
-  graph_version: string
-  tables: { id: string; name?: string; label: string; description: string; domain: string; database: string }[]
-  fields: {
-    id: string
-    table_id: string
-    table_name?: string
-    sql_name?: string
-    name: string
-    label: string
-    type: string
-    description: string
-    role: string
-    source: string
-    score: number
-  }[]
-  joins: {
-    left_table: string
-    left_field: string
-    right_table: string
-    right_field: string
-    description: string
-    relation_type: string
-  }[]
-}
-
-export interface DatabaseHandoff {
-  database: { name: string; dialect: string; route: string }
-  required_context: {
-    schema_graph: SchemaGraph
-    resolved_parameters: Record<string, unknown>
-    tool_facts: { tool: string; arguments: Record<string, unknown>; result: Record<string, unknown> }[]
-  }
-  instruction: {
-    task: string
-    filters: string[]
-    joins: string[]
-    group_by: string[]
-    metrics: string[]
-    order_by: string[]
-  }
-  output_contract: {
-    row_grain: string
-    columns: { name: string; alias: string; type: string }[]
-    max_rows: number
-    empty_result_policy: string
-  }
-}
-
 export interface CoderToolCall {
   call_index: number
   database: string
-  arguments: DatabaseHandoff | {
+  arguments: {
     mode: "query_agent"
     transport: "direct"
     schema_catalog_version?: string | null
@@ -233,19 +170,6 @@ export interface QueryResult {
   saved: boolean
   result_title?: string | null
   standalone_query?: string | null
-  schema_graph?: SchemaGraph | null
-  retrieval?: null | {
-    threshold: number
-    bm25_count: number
-    dense_count: number
-    rrf_count: number
-    candidate_count: number
-    selected_count: number
-    embedding_source: string
-    rerank_source: string
-    hits: SchemaHit[]
-    schema_graph?: SchemaGraph
-  }
   tool_calls?: CoderToolCall[]
   analysis_sources?: AnalysisSource[]
   workflow_mode?: "qa" | "single_database_fast_path" | "multi_database_handoff" | "langgraph_hitl" | string | null

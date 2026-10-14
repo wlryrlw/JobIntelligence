@@ -7,7 +7,7 @@ from pydantic import ValidationError
 
 from eval.judge import JudgeConfig
 from eval.judge_models import JudgeVerdict
-from eval.judge_runner import run_judge
+from eval.judge_runner import _metrics_for_console, run_judge
 
 
 class FakeJudge:
@@ -17,7 +17,7 @@ class FakeJudge:
 
     async def evaluate(self, system_prompt: str, payload: dict[str, object]) -> JudgeVerdict:
         self.payloads.append(payload)
-        assert "候选 SQL" in system_prompt
+        assert "SQL" in system_prompt
         return JudgeVerdict(
             score=self.score,
             label="correct" if self.score == 2 else "partially_correct",
@@ -72,11 +72,11 @@ def test_judge_only_evaluates_repair_sql_as_final_answer() -> None:
         )
     )
 
-    assert len(result.cases) == result.dataset_size == 35
-    assert len(fake.payloads) == 35
-    assert result.summaries[0].completed_count == 35
+    assert len(result.cases) == result.dataset_size == 100
+    assert len(fake.payloads) == 100
+    assert result.summaries[0].completed_count == 100
     assert result.summaries[0].failed_count == 0
-    assert result.summaries[0].score_1_count == 35
+    assert result.summaries[0].score_1_count == 100
     assert result.summaries[0].passed_count == 0
     assert all("reference_answer" not in payload for payload in fake.payloads)
 
@@ -107,3 +107,50 @@ def test_judge_score_only_accepts_zero_one_or_two() -> None:
             error_type="none",
             reason="非法分数。",
         )
+
+
+def test_judge_reports_progress_without_changing_result() -> None:
+    fake = FakeJudge()
+    progress: list[str] = []
+    result = asyncio.run(
+        run_judge(
+            "seed",
+            mode="single",
+            prompt="请评测最终 SQL。",
+            config=JudgeConfig(
+                api_key="test-key",
+                base_url="https://judge.test/v1",
+                model="judge-model",
+            ),
+            evaluator=fake,
+            progress=progress.append,
+        )
+    )
+
+    assert result.summaries[0].completed_count == 6
+    assert progress[0] == "开始 Judge 评测：dataset=seed，mode=single，共 6 个 case。"
+    assert "[1/6] 正在调用 Judge：" in progress[1]
+    assert "score=2" in progress[2]
+    assert progress[-1] == "Judge 评测完成：6/6 个 case 已处理。"
+
+
+def test_console_metrics_omit_case_details() -> None:
+    fake = FakeJudge()
+    result = asyncio.run(
+        run_judge(
+            "seed",
+            mode="single",
+            prompt="请评测最终 SQL。",
+            config=JudgeConfig(
+                api_key="test-key",
+                base_url="https://judge.test/v1",
+                model="judge-model",
+            ),
+            evaluator=fake,
+        )
+    )
+
+    metrics = _metrics_for_console(result)
+    assert "cases（case明细）" not in metrics
+    assert metrics["dataset（数据集）"] == "seed"
+    assert metrics["summaries（汇总指标）"][0]["score_2_count（score=2的case数）"] == 6

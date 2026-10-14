@@ -7,7 +7,7 @@ const props = defineProps<{
   sources: ReportDataSource[]
 }>()
 
-const colors = ["#277456", "#62a07f", "#98bca8", "#d2aa60", "#6983a8", "#a77b8c", "#7e9b5c", "#c27c5a"]
+const colors = ["#1f1f1f", "#4b4b4b", "#777", "#9b9b9b", "#b7b7b7", "#626262", "#d0d0d0", "#383838"]
 const source = computed(() => props.sources.find((item) => item.taskId === props.spec.source_task_id))
 const categoryLabel = computed(() => source.value?.columnLabels?.[props.spec.category_field] || props.spec.category_field)
 const valueLabel = computed(() => source.value?.columnLabels?.[props.spec.value_field] || props.spec.value_field)
@@ -22,7 +22,7 @@ const points = computed(() => (source.value?.rows ?? [])
 const maximum = computed(() => Math.max(...points.value.map((item) => Math.abs(item.value)), 1))
 const total = computed(() => points.value.reduce((sum, item) => sum + Math.max(item.value, 0), 0))
 const pieBackground = computed(() => {
-  if (!total.value) return "#e8ece9"
+  if (!total.value) return "#e5e5e5"
   let start = 0
   const stops = points.value.map((item, index) => {
     const end = start + Math.max(item.value, 0) / total.value * 100

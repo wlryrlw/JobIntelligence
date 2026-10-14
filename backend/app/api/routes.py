@@ -21,7 +21,6 @@ from ..crawling import (
     CrawlRunManager,
     CrawlRunSnapshot,
 )
-from ..errors import PipelineStageError
 from ..fake_executor import default_fake_executor
 from ..models import (
     ClarificationRequest,
@@ -60,12 +59,6 @@ def require_user(
     user = auth_service.authenticate(authorization)
     if not user:
         raise HTTPException(status_code=401, detail="请先登录")
-    return user
-
-
-def require_admin(user: AuthUser = Depends(require_user)) -> AuthUser:
-    if user.role != "admin":
-        raise HTTPException(status_code=403, detail="仅管理员可以执行该操作")
     return user
 
 
@@ -118,36 +111,6 @@ def schema(
     user: AuthUser = Depends(require_user),
 ) -> list[dict]:
     return service.visible_schema(user.user_id)
-
-
-@router.get("/schema/search")
-def search_schema(
-    q: str,
-    threshold: float | None = None,
-    user: AuthUser = Depends(require_user),
-) -> dict:
-    if not q.strip():
-        raise HTTPException(status_code=400, detail="检索问题不能为空")
-    if threshold is not None and not 0 <= threshold <= 1:
-        raise HTTPException(status_code=400, detail="阈值必须在0到1之间")
-    try:
-        return service.search_schema(q.strip(), threshold, user.user_id)
-    except PipelineStageError as error:
-        raise HTTPException(
-            status_code=502,
-            detail=f"{error.stage}失败：{error.message}",
-        ) from error
-
-
-@router.post("/schema/index/rebuild")
-def rebuild_schema_index(_: AuthUser = Depends(require_admin)) -> dict:
-    try:
-        return service.rebuild_schema_index()
-    except PipelineStageError as error:
-        raise HTTPException(
-            status_code=502,
-            detail=f"{error.stage}失败：{error.message}",
-        ) from error
 
 
 @router.get("/config")

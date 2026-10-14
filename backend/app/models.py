@@ -95,7 +95,6 @@ class QueryResult(BaseModel):
     analysis: str | None = None
     saved: bool = False
     route_reason: str | None = None
-    retrieval: dict[str, Any] | None = None
     execution_log: list[dict[str, Any]] = Field(default_factory=list)
     sql_attempts: list[dict[str, Any]] = Field(default_factory=list, alias="attempts")
     dataset_version: str | None = None
@@ -104,7 +103,6 @@ class QueryResult(BaseModel):
     result_title: str | None = None
     analysis_sources: list[dict[str, Any]] = Field(default_factory=list)
     standalone_query: str | None = None
-    schema_graph: dict[str, Any] | None = None
     workflow_mode: str | None = None
     crawl_run_id: str | None = None
     report: AnalysisReport | None = None
@@ -125,7 +123,6 @@ class SchemaField(BaseModel):
     aggregation: str = "none"
     source_type: str = ""
     data_profile: dict[str, Any] = Field(default_factory=dict)
-    index_content: dict[str, str] = Field(default_factory=dict)
 
 
 class SchemaTable(BaseModel):

@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from typing import Any
 
-from ..database import SCHEMA
 from ..models import Clarification, Interpretation, QueryResult
 from ..querying.models import SqlExecution
 from ..querying.data_qa_agent import DataQaResult
@@ -91,13 +90,11 @@ class ResultBuilder:
             clarification=clarification,
             analysis=f"{clarification.question} 你可以直接回复：{labels}。",
             route_reason=str(state.get("intent", {}).get("reason") or "问数"),
-            retrieval=ResultBuilder.public_retrieval(state.get("retrieval") or {}),
             standalone_query=state.get("standalone_query"),
-            schema_graph=state.get("schema_graph"),
             steps=(
                 ["意图路由：career_advice", "检查简历、岗位参数和数据集资源", "等待用户补充"]
                 if str((state.get("intent") or {}).get("action")) == "career_advice"
-                else ["一次请求预处理：路由并提取检索词", "召回字段并构建Schema图", "LangGraph暂停并等待用户回复"]
+                else ["一次请求预处理：路由并提取查询口径", "读取完整SchemaCatalog", "LangGraph暂停并等待用户回复"]
             ),
             workflow_mode=str(state.get("workflow_mode") or "langgraph_hitl"),
             elapsed_ms=runtime.elapsed_ms if runtime else None,
@@ -112,14 +109,16 @@ class ResultBuilder:
         tool_calls: list[dict[str, Any]],
         execution_log: list[dict[str, Any]],
     ) -> QueryResult:
-        graph = state.get("schema_graph") or {}
         runtime = current_query_runtime()
         timed_out = next(
             (item for item in reversed(execution_log) if item.get("error_code") == "timeout"),
             None,
         )
-        table_ids = [item["id"] for item in graph.get("tables", [])]
-        table_labels = [item["label"] for item in SCHEMA if item["id"] in table_ids]
+        table_labels = [
+            str(item.get("label") or item.get("name") or "")
+            for item in state.get("schema_tables") or []
+            if item.get("label") or item.get("name")
+        ]
         metric_columns = [
             column for column in combined.columns
             if any(term in column for term in ("额", "数", "率", "平均", "目标"))
@@ -127,10 +126,9 @@ class ResultBuilder:
         dimension_columns = [column for column in combined.columns if column not in metric_columns]
         mode = str(state.get("workflow_mode") or "query_agent")
         steps = [
-            "一次预处理：上下文聚合、问答/问数路由、检索词提取",
+            "一次预处理：上下文聚合、问答/问数路由、查询口径提取",
             *([f"独立查询改写：{state.get('standalone_query')}"] if state.get("rewritten") else []),
-            "BM25与Dense召回，经RRF融合和Rerank阈值筛选",
-            f"构建Schema图：{len(graph.get('tables', []))}张表 / {len(graph.get('fields', []))}个字段",
+            f"读取完整SchemaCatalog：{len(table_labels)}张表",
             "QueryAgent根据SchemaCatalog生成SQL",
             "AccessScope校验、SQLGlot只读校验并执行DuckDB",
         ]
@@ -161,8 +159,8 @@ class ResultBuilder:
                 time_range="、".join(
                     (state.get("extraction") or {}).get("time_expressions") or []
                 ) or "未指定",
-                table="、".join(table_labels) or "Schema召回数据表",
-                assumptions=["Schema字段经过Rerank阈值筛选", "岗位结果上下文按需传入"],
+                table="、".join(table_labels) or "QueryAgent完整SchemaCatalog",
+                assumptions=["查询仅使用当前用户有权访问的完整Schema", "岗位结果上下文按需传入"],
             ),
             steps=steps,
             sql=combined.sql,
@@ -171,13 +169,11 @@ class ResultBuilder:
             rows=combined.rows,
             analysis=analysis,
             route_reason=str(state.get("intent", {}).get("reason") or "问数"),
-            retrieval=ResultBuilder.public_retrieval(state.get("retrieval") or {}),
             execution_log=execution_log,
             tool_calls=tool_calls,
             result_title=final.get("title") or "查询结果",
             analysis_sources=state.get("analysis_sources") or [],
             standalone_query=state.get("standalone_query"),
-            schema_graph=graph,
             workflow_mode=mode,
             dataset_version=state.get("dataset_version"),
             prompt_token_count=state.get("prompt_token_count"),
@@ -197,20 +193,8 @@ class ResultBuilder:
             analysis=execution.error,
             sql=execution.sql or None,
             route_reason=str(state.get("intent", {}).get("reason") or "问数"),
-            retrieval=ResultBuilder.public_retrieval(state.get("retrieval") or {}),
             execution_log=log,
             standalone_query=state.get("standalone_query"),
-            schema_graph=state.get("schema_graph"),
             workflow_mode=str(state.get("workflow_mode") or "query_agent"),
             elapsed_ms=runtime.elapsed_ms if runtime else None,
         )
-
-    @staticmethod
-    def public_retrieval(retrieval: dict[str, Any]) -> dict[str, Any]:
-        visible = {
-            "query", "retrieval_terms", "extraction", "embedding_source",
-            "rerank_source", "threshold", "bm25_count", "dense_count", "rrf_count",
-            "candidate_count", "selected_count", "hits", "table_candidates",
-            "low_confidence_candidates", "schema_graph",
-        }
-        return {key: value for key, value in retrieval.items() if key in visible}

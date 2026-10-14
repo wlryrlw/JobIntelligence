@@ -1,4 +1,4 @@
-"""手动运行：验证三个模型接口，不输出 API Key。"""
+"""手动运行：验证主模型接口，不输出 API Key。"""
 
 import sys
 from pathlib import Path
@@ -13,8 +13,6 @@ if __name__ == "__main__":
     status = {}
     checks = {
         "chat": lambda: bool(client.chat_json("只返回 JSON。", '返回 {"ok": true}').get("ok")),
-        "embedding": lambda: len(client.embed(["销售额字段"])[0]),
-        "rerank": lambda: len(client.rerank("销售额", ["实付金额字段", "客户名称字段"], 2)),
     }
     for name, check in checks.items():
         try:

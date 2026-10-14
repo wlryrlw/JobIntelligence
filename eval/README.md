@@ -4,9 +4,9 @@
 
 - `data/seed.jsonl`：6 个固定冒烟样例；
 - `data/eval_dev.jsonl`：展开后的 24 个开发 case；
-- `data/eval_test.jsonl`：展开后的 35 个测试 case。
+- `data/eval_test.jsonl`：展开后的 100 个测试 case。
 
-开发集和测试集合计 59 个 NL2SQL case。`repeat` 用于表达同一语义模板的多个回归样例，加载时会展开为带唯一 ID 的独立 case；因此展开数量适合衡量回归覆盖，不等价于 59 个完全独立的泛化样本。
+开发集和测试集合计 124 个 NL2SQL case。`repeat` 用于表达同一语义模板的多个回归样例，加载时会展开为带唯一 ID 的独立 case；因此展开数量适合衡量回归覆盖，不等价于 124 个完全独立的泛化样本。
 
 每个 case 可以声明 `category`、`tags` 和 `smoke`。`--suite smoke` 只运行标记为 smoke 的样例，`--suite full`（默认）运行所选数据集的全部样例。
 
@@ -24,7 +24,9 @@ make eval-smoke
 - 普通评测：`eval/results/{dataset}_{suite}.json`；
 - 消融评测：`eval/results/{dataset}_{suite}_ablation.json`。
 
-命令行只打印结果文件路径，不直接打印完整指标 JSON。需要自定义位置时仍可传入 `--output`。
+命令行会打印整体评测指标和结果文件路径，但不会展开每个 case 的完整明细。完整 case 结果仍保存在 JSON 文件中。需要自定义位置时仍可传入 `--output`。
+
+控制台字段会追加中文说明，例如 `dataset（数据集）`、`dataset_size（数据集规模）`、`final_accuracy（最终准确率）`。JSON 文件中的字段名保持英文，便于程序读取和下游处理；`SQL`、`schema`、`score`、`tokens`、`few-shot` 等专有名词保留原文。
 
 ## 可选的 LLM-as-judge
 
@@ -78,7 +80,9 @@ uv run python -m eval.judge_runner \
 
 也可以使用 `make eval-judge` 执行默认的 reference 评测。Judge 结果单独写入 `JudgeRunResult`，不会覆盖或改写确定性评测中的 `final_accuracy`、执行成功率和 Schema 指标。
 
-未指定 `--output` 时，Judge 结果默认写入 `eval/results/judge_{dataset}_{mode}.json`，例如 `eval/results/judge_eval_test_reference.json`；命令行只打印结果文件路径。
+未指定 `--output` 时，Judge 结果默认写入 `eval/results/judge_{dataset}_{mode}.json`，例如 `eval/results/judge_eval_test_reference.json`；命令行会打印 Judge 汇总指标和结果文件路径，不会展开每个 case 的完整明细。
+
+Judge 会按 case 串行调用外部 API。执行开始时会立即打印总 case 数，并在每个 case 开始、完成或失败时打印进度；因此 `make eval-judge` 默认会处理 `eval_test` 的 100 个 case，耗时取决于 Judge API 响应速度。首次配置或联调时可以先运行 `make eval-judge-smoke`，它只评测 `seed` 的 6 个固定 case。
 
 ## 指标
 
@@ -93,7 +97,7 @@ uv run python -m eval.judge_runner \
 
 每个 case 还会保存同样的 `first_*` 和 `final_*` 指标。汇总结果同时保留表级和字段级指标，便于区分“选对表但字段错了”和“连表都没有选对”。
 
-这组指标衡量“SQL 实际使用的 Schema 是否覆盖 Gold SQL 所需 Schema”，不等同于 `SchemaIndex.retrieve()` 的真实模型检索泛化评测。当前离线 runner 使用确定性 SQL fixture，保持无网络、无 token 消耗。
+这组指标衡量“SQL 实际使用的 Schema 是否覆盖 Gold SQL 所需 Schema”，对应 QueryAgent 使用完整 SchemaCatalog 生成 SQL 的链路，不是字段检索模型的泛化评测。当前离线 runner 使用确定性 SQL fixture，保持无网络、无 token 消耗。
 
 ### SQL 执行与查询结果指标
 

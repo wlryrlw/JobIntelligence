@@ -25,6 +25,7 @@ from app.querying.schema_catalog import SchemaCatalogBuilder
 from app.security import AccessScope
 
 from eval.dataset import DATA_ROOT, load_dataset
+from eval.console import localize_console_keys
 from eval.models import (
     BenchmarkResult,
     CaseMetrics,
@@ -383,6 +384,23 @@ def run_ablation(
     ]
 
 
+def _strip_case_details(payload: Any) -> Any:
+    """只保留整体指标，避免控制台打印每个 case 的完整明细。"""
+    if isinstance(payload, list):
+        return [_strip_case_details(item) for item in payload]
+    if isinstance(payload, dict):
+        return {
+            key: value
+            for key, value in payload.items()
+            if key != "cases"
+        }
+    raise TypeError("评测结果必须是对象或对象列表")
+
+
+def _metrics_for_console(payload: Any) -> Any:
+    return localize_console_keys(_strip_case_details(payload))
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="运行 OfferAgent 离线 NL2SQL 评测")
     parser.add_argument("--dataset", choices=("seed", "eval_dev", "eval_test"), default="eval_test")
@@ -420,7 +438,9 @@ def main(argv: list[str] | None = None) -> int:
     )
     output_path.parent.mkdir(parents=True, exist_ok=True)
     output_path.write_text(encoded, encoding="utf-8")
-    print(f"评测结果已写入：{output_path}")
+    print("确定性评测指标：")
+    print(json.dumps(_metrics_for_console(payload), ensure_ascii=False, indent=2))
+    print(f"完整评测结果已写入：{output_path}")
     return 0
 
 

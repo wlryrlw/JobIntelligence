@@ -8,7 +8,7 @@ def _state() -> dict[str, object]:
     return {
         "task_id": "result-builder-test",
         "intent": {"reason": "测试"},
-        "schema_graph": {"tables": [], "fields": []},
+        "schema_tables": [],
     }
 
 

@@ -9,7 +9,7 @@ def test_stage4_datasets_are_separated_and_replayable() -> None:
     assert {name: len(dataset.cases) for name, dataset in datasets.items()} == {
         "seed": 6,
         "eval_dev": 24,
-        "eval_test": 35,
+        "eval_test": 100,
     }
 
 
@@ -34,7 +34,7 @@ def test_stage4_runner_reports_accuracy_recovery_and_latency() -> None:
 def test_stage4_smoke_suite_selects_only_marked_cases() -> None:
     result = run_benchmark(load_dataset("eval_test"), suite="smoke")
     assert result.suite == "smoke"
-    assert result.dataset_size == 7
+    assert result.dataset_size == 10
     assert all(case.smoke for case in result.cases)
     assert result.final_execution_success_rate == 1
 
