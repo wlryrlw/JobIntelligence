@@ -41,6 +41,7 @@ class RouteDecision(BaseModel):
     target: TargetJobRequest | None = None
     clarification: CoordinatorClarification | None = None
     availability: DatasetAvailability | None = None
+    career_mode: str | None = None
     reason: str = Field(min_length=1, max_length=1000)
 
 
@@ -83,14 +84,26 @@ class Coordinator:
             " ",
             keyword,
         )
+        keyword = re.split(
+            r"(?:通常如何|一般如何|如何|怎么|有哪些|有什么|岗位要求|任职要求|技能要求|技术栈|需要哪些)",
+            keyword,
+            maxsplit=1,
+        )[0]
+        keyword = re.sub(r"(?:应届|经验不限|1\s*[-~至]\s*3\s*年|3\s*[-~至]\s*5\s*年|5\s*[-~至]\s*10\s*年)", " ", keyword)
         keyword = re.split(r"[，,。！？?;；]", keyword, maxsplit=1)[0]
         keyword = re.sub(r"\s+", " ", keyword).strip(" ：:、")
         keyword = re.sub(r"^(?:的|在|于)\s*", "", keyword)
         if not keyword:
             return None
+        experience_patterns = (
+            ("应届", r"应届"),
+            ("经验不限", r"经验\s*不限"),
+            ("1-3年", r"1\s*[-~至]\s*3\s*年"),
+            ("3-5年", r"3\s*[-~至]\s*5\s*年"),
+            ("5-10年", r"5\s*[-~至]\s*10\s*年"),
+        )
         experience = next(
-            (item for item in ("应届", "经验不限", "1-3年", "3-5年", "5-10年")
-             if item in query),
+            (label for label, pattern in experience_patterns if re.search(pattern, query)),
             None,
         )
         degree = next(
@@ -214,6 +227,7 @@ class Coordinator:
         request: UserRequest,
         *,
         action: str,
+        career_mode: str | None = None,
         now: datetime | None = None,
     ) -> RouteDecision:
         if action in {"direct_response", "data_qa"}:
@@ -241,7 +255,7 @@ class Coordinator:
                 ),
                 reason="缺少城市筛选条件",
             )
-        if action == "career_advice" and not request.resume_id:
+        if action == "career_advice" and career_mode != "job_requirement" and not request.resume_id:
             return RouteDecision(
                 action="clarify",
                 target=target,
@@ -268,6 +282,7 @@ class Coordinator:
             action=action if action in {"database_query", "career_advice"} else "database_query",
             target=target,
             availability=availability,
+            career_mode=career_mode,
             reason="岗位数据资源可用",
         )
 

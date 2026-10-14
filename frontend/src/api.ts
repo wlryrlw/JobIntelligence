@@ -76,12 +76,14 @@ export const api = {
     sessionId: string,
     careerContext?: { resume_id?: string; target?: TargetJobRequest },
     taskId?: string,
+    useJdRag = false,
   ) => request<QueryResult>("/api/query", {
     method: "POST",
     body: JSON.stringify({
       query,
       session_id: sessionId,
       workspace,
+      use_jd_rag: useJdRag,
       ...(taskId ? { task_id: taskId } : {}),
       ...(careerContext?.resume_id ? { resume_id: careerContext.resume_id } : {}),
       ...(careerContext?.target ? { target: careerContext.target } : {}),

@@ -21,10 +21,15 @@ function inline(text: string) {
     .replace(/`([^`]+)`/g, "<code>$1</code>")
     .replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>")
     .replace(/\*([^*]+)\*/g, "<em>$1</em>")
+    .replace(/\n/g, "<br>")
 }
 
 function tableCells(line: string) {
   return line.trim().replace(/^\||\|$/g, "").split("|").map((cell) => cell.trim())
+}
+
+function parseListItem(line: string) {
+  return line.trim().match(/^([-*]|\d+[.)、])\s*(.+)$/)
 }
 
 function parseMarkdown(markdown: string) {
@@ -55,13 +60,13 @@ function parseMarkdown(markdown: string) {
       continue
     }
 
-    const list = line.match(/^([-*]|\d+\.)\s+(.+)$/)
+    const list = parseListItem(line)
     if (list) {
-      const ordered = /\d+\./.test(list[1])
+      const ordered = /^\d/.test(list[1])
       const items: string[] = []
       while (index < lines.length) {
-        const item = lines[index].trim().match(/^([-*]|\d+\.)\s+(.+)$/)
-        if (!item || /\d+\./.test(item[1]) !== ordered) break
+        const item = parseListItem(lines[index])
+        if (!item || /^\d/.test(item[1]) !== ordered) break
         items.push(item[2])
         index += 1
       }
@@ -77,11 +82,11 @@ function parseMarkdown(markdown: string) {
 
     const paragraphs = [line]
     index += 1
-    while (index < lines.length && lines[index].trim() && !/^(#{1,3})\s+|^([-*]|\d+\.)\s+|^>\s+|^\|/.test(lines[index].trim())) {
+    while (index < lines.length && lines[index].trim() && !/^(#{1,3})\s+|^([-*]|\d+[.)、])\s*.+|^>\s+|^\|/.test(lines[index].trim())) {
       paragraphs.push(lines[index].trim())
       index += 1
     }
-    blocks.push({ type: "paragraph", text: paragraphs.join(" ") })
+    blocks.push({ type: "paragraph", text: paragraphs.join("\n") })
   }
   return blocks
 }

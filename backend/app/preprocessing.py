@@ -7,10 +7,12 @@ from typing import Any, Literal
 from .errors import PipelineStageError
 from .model_client import ModelClient
 from .contracts import TargetJobRequest
+from .coordinator import Coordinator
 from .query_runtime import QueryTimeoutError, emit_progress
 
 
 RouteName = Literal["data_qa", "database_query", "career_advice", "direct_response"]
+CareerMode = Literal["job_requirement", "resume_gap", "resume_rewrite", "interview_preparation"]
 ResponseType = Literal["answer", "clarification"]
 logger = logging.getLogger(__name__)
 
@@ -43,6 +45,7 @@ class PreparedRequest:
     response_type: ResponseType = "answer"
     target: TargetJobRequest | None = None
     resume_id: str | None = None
+    career_mode: CareerMode | None = None
     source: str = "model"
 
 
@@ -58,17 +61,29 @@ class RequestPreprocessor:
         recent_context: str,
         *,
         has_data_context: bool | None = None,
+        use_jd_rag: bool = False,
     ) -> PreparedRequest:
         emit_progress("request_preprocessing", "正在理解问题并选择处理路径")
         if has_data_context is None:
             has_data_context = bool(recent_context.strip())
+        # 这是用户显式勾选 RAG 后的确定性路由保护，避免“上海 3-5 年 Agent
+        # 岗位通常如何要求 RAG？”被模型误判为普通 database_query 或 direct_response。
+        if use_jd_rag and self.looks_like_job_requirement_query(query):
+            return PreparedRequest(
+                action="career_advice",
+                confidence=1.0,
+                reason="用户显式选择岗位 JD 检索，问题属于岗位要求分析",
+                target=Coordinator().parse_target(query),
+                career_mode="job_requirement",
+                source="user_jd_rag_toggle",
+            )
         system = """你负责 OfferAgent 的请求理解与回复路由。根据用户问题选择正确的下游能力，
 但不能把内部模块当成产品身份向用户介绍。
 
 意图边界：
 1. database_query：用户明确要求查询新的数据库数据，例如获取指标、明细、排名、统计或对比。
 2. data_qa：用户明确要求解释或分析上下文中已经存在的查询结果、表格或数据，不需要查询新数据。
-3. career_advice：用户要求基于目标岗位和简历做技能缺口、简历或面试建议。
+3. career_advice：用户要求基于目标岗位和简历做技能缺口、简历或面试建议，或在用户显式选择 JD RAG 后询问岗位通常如何要求。
 4. direct_response：除以上三类之外的请求，包括闲聊、一般交流，以及无法确定是
    查询新数据还是分析已有结果的灰色地带。此类请求由你直接回答；如果缺少的信息会影响
    意图判断，则直接提出一个简短的自然语言问题。不要生成选项，不要假装已经查询数据。
@@ -86,13 +101,14 @@ class RequestPreprocessor:
   "rewritten":false,
   "response":"仅direct_response填写自然语言回答或澄清问题",
   "response_type":"answer|clarification",
+  "career_mode":"job_requirement|resume_gap|resume_rewrite|interview_preparation",
   "query_extraction":{
     "metrics":[], "dimensions":[], "filters":[],
     "time_expressions":[], "operations":[]
   }
 }
 database_query必须填写standalone_query和query_extraction，response为空。
-career_advice可以提供target（keyword/city/company/experience/degree）和resume_id。
+career_advice可以提供target（keyword/city/company/experience/degree）、resume_id和career_mode；没有简历但询问岗位普遍要求时使用job_requirement。
 data_qa必须清空standalone_query、response和query_extraction。
 direct_response必须填写response，并清空standalone_query和query_extraction。不要猜表名。"""
         user = f"当前问题：{query}\n近期轻量上下文：{recent_context or '无'}"
@@ -151,6 +167,7 @@ direct_response必须填写response，并清空standalone_query和query_extracti
                 reason=reason,
                 target=target,
                 resume_id=str(payload.get("resume_id") or "").strip() or None,
+                career_mode=self._career_mode(payload.get("career_mode")),
             )
 
         if action == "direct_response":
@@ -198,6 +215,23 @@ direct_response必须填写response，并清空standalone_query和query_extracti
             "占比", "平均", "最高", "最低", "最常见", "趋势",
         )
         return any(hint in query for hint in hints)
+
+    @staticmethod
+    def looks_like_job_requirement_query(query: str) -> bool:
+        query_lower = query.casefold()
+        has_job_context = any(item in query_lower for item in ("岗位", "职位", "jd", "招聘", "agent"))
+        requirement_hints = (
+            "通常如何", "一般如何", "岗位要求", "任职要求", "技能要求", "技术栈",
+            "需要哪些", "有什么要求", "有哪些要求", "如何要求", "看重什么",
+        )
+        return has_job_context and any(item in query_lower for item in requirement_hints)
+
+    @staticmethod
+    def _career_mode(value: Any) -> CareerMode:
+        normalized = str(value or "resume_gap")
+        if normalized not in {"job_requirement", "resume_gap", "resume_rewrite", "interview_preparation"}:
+            raise ValueError(f"不支持的 career_mode：{normalized}")
+        return normalized  # type: ignore[return-value]
 
     @staticmethod
     def _strings(value: Any) -> list[str]:

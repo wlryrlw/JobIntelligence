@@ -329,23 +329,33 @@ async def query(
     submit_async = getattr(service, "submit_async", None)
     if submit_async is None:
         # 保持旧版轻量测试替身和外部集成的兼容性；正式服务始终走异步入口。
+        kwargs = {
+            "resume_id": payload.resume_id,
+            "target": payload.target,
+        }
+        if payload.use_jd_rag:
+            kwargs["use_jd_rag"] = True
         return await asyncio.to_thread(
             service.submit,
             payload.query,
             payload.session_id,
             workspace,
             user.user_id,
-            resume_id=payload.resume_id,
-            target=payload.target,
+            **kwargs,
         )
+    kwargs = {
+        "resume_id": payload.resume_id,
+        "target": payload.target,
+        "task_id": payload.task_id,
+    }
+    if payload.use_jd_rag:
+        kwargs["use_jd_rag"] = True
     return await submit_async(
         payload.query,
         payload.session_id,
         workspace,
         user.user_id,
-        resume_id=payload.resume_id,
-        target=payload.target,
-        task_id=payload.task_id,
+        **kwargs,
     )
 
 

@@ -5,6 +5,7 @@ import CareerReportDialog from "./components/CareerReportDialog.vue"
 import ClarificationPanel from "./components/ClarificationPanel.vue"
 import CrawlPanel from "./components/CrawlPanel.vue"
 import ExecutionTimeline from "./components/ExecutionTimeline.vue"
+import MarkdownReport from "./components/MarkdownReport.vue"
 import ReportCard from "./components/ReportCard.vue"
 import ResultTableCard from "./components/ResultTableCard.vue"
 import type {
@@ -16,7 +17,6 @@ import type {
   ReportDataSource,
   ResumeUploadResponse,
   SavedMemory,
-  TargetJobRequest,
   WorkspaceConfig,
 } from "./types"
 
@@ -65,6 +65,7 @@ const savedActionError = ref("")
 const savedActionMessage = ref("")
 const savedMemories = ref<SavedMemory[]>([])
 const workspace = ref<WorkspaceConfig>({})
+const useJdRag = ref(false)
 const conversations = ref<ConversationRecord[]>([])
 const activeConversationId = ref("")
 const expandedSql = ref<string | null>(null)
@@ -89,10 +90,7 @@ const resumeUploading = ref(false)
 const resumeError = ref("")
 const resumePanelOpen = ref(false)
 const careerDialogOpen = ref(false)
-const careerLoading = ref(false)
-const careerError = ref("")
 const careerReport = ref<CareerReport | null>(null)
-const careerTarget = ref<TargetJobRequest>({ keyword: "", city: "", experience: "", degree: "" })
 
 const activeConversation = computed(() =>
   conversations.value.find((item) => item.id === activeConversationId.value),
@@ -200,6 +198,7 @@ function restoreResume() {
   if (!raw) return
   try {
     resume.value = JSON.parse(raw) as ResumeUploadResponse
+    resumePanelOpen.value = true
   } catch {
     sessionStorage.removeItem(RESUME_SESSION_KEY)
   }
@@ -380,7 +379,14 @@ async function submit(text?: string) {
         rows: table.rows.slice(0, 50),
       })),
     }
-    const result = await api.query(query, requestWorkspace, activeConversation.value?.id ?? "studio-demo", undefined, taskId)
+    const result = await api.query(
+      query,
+      requestWorkspace,
+      activeConversation.value?.id ?? "studio-demo",
+      resume.value ? { resume_id: resume.value.resume_id } : undefined,
+      taskId,
+      useJdRag.value,
+    )
     activeConversation.value?.turns.push({ query, result })
     saveActiveConversation()
   } catch (caught) {
@@ -412,6 +418,7 @@ function progressStageLabel(stage: string) {
     career_resume: "读取简历证据",
     career_profile: "构建岗位画像",
     career_analysis: "生成求职分析",
+    career_rag: "检索岗位 JD 证据",
     completed: "已完成",
     query_failed: "查询失败",
     clarification: "等待补充信息",
@@ -549,57 +556,8 @@ async function removeResume() {
   }
 }
 
-function openCareerDialog() {
-  if (!resume.value) {
-    resumeError.value = "请先上传简历，再开始简历与岗位证据分析。"
-    return
-  }
-  careerError.value = ""
-  careerReport.value = null
-  careerDialogOpen.value = true
-  void runCareerAnalysis()
-}
-
-async function runCareerAnalysis() {
-  if (!resume.value) {
-    careerError.value = "请先上传简历。"
-    return
-  }
-  const target = { ...careerTarget.value, keyword: careerTarget.value.keyword.trim() }
-  if (!target.keyword) {
-    careerError.value = "请填写目标岗位关键词，例如：Agent 开发工程师。"
-    return
-  }
-  if (!target.city?.trim()) {
-    careerError.value = "请填写目标城市，例如：上海。"
-    return
-  }
-  careerLoading.value = true
-  careerError.value = ""
-  try {
-    const result = await api.query(
-      `请分析我的简历与${target.city || "目标城市"}的${target.keyword}岗位匹配情况，并给出技能差距、简历改写方向和面试准备建议。`,
-      {},
-      `${activeConversationId.value || "career"}-career`,
-      { resume_id: resume.value.resume_id, target },
-    )
-    if (result.status !== "completed" || !result.career_report) {
-      throw new Error(result.analysis || result.message || "后端未返回可用的分析报告")
-    }
-    careerReport.value = result.career_report
-    activeConversation.value?.turns.push({ query: `简历与${target.keyword}岗位证据分析`, result })
-    saveActiveConversation()
-    scrollConversationToBottom({ force: true })
-  } catch (caught) {
-    careerError.value = caught instanceof Error ? caught.message : "简历分析失败，请稍后重试。"
-  } finally {
-    careerLoading.value = false
-  }
-}
-
 function showCareerReport(report: CareerReport) {
   careerReport.value = report
-  careerError.value = ""
   careerDialogOpen.value = true
 }
 
@@ -675,7 +633,7 @@ function downloadCareerReport() {
     </aside>
 
     <main class="chat-column">
-      <header class="chat-header"><button class="mobile-menu" @click="leftOpen = !leftOpen">☰</button><div><strong>{{ activeConversation?.title ?? "新对话" }}</strong><span>岗位市场与求职分析</span></div><button class="config-trigger" @click="rightOpen = !rightOpen">分析工具</button><span class="model-state"><i></i> 证据优先模式</span></header>
+      <header class="chat-header"><button class="mobile-menu" @click="leftOpen = !leftOpen">☰</button><div><strong>{{ activeConversation?.title ?? "新对话" }}</strong><span>岗位市场与求职分析</span></div><button class="config-trigger" @click="rightOpen = !rightOpen">分析工具</button></header>
       <section ref="conversationScroll" class="conversation-scroll" @scroll="handleConversationScroll"><Transition name="conversation" mode="out-in"><div :key="activeConversationId" class="conversation-view">
         <div v-if="!activeConversation?.turns.length && !loading" class="welcome-panel"><div class="welcome-copy"><p>查询岗位趋势、薪资与技能要求，也可以结合简历证据获得求职建议。</p><div class="prompt-list"><button v-for="prompt in prompts" :key="prompt" @click="submit(prompt)"><span>↗</span>{{ prompt }}</button></div></div></div>
         <div v-else class="thread">
@@ -689,13 +647,14 @@ function downloadCareerReport() {
               <div v-if="turn.result.analysis_sources?.length" class="analysis-source-strip"><strong>综合分析来源</strong><span v-for="source in turn.result.analysis_sources" :key="source.task_id">▦ {{ source.title }} · {{ source.row_count }} 行</span></div>
               <div v-if="turn.result.interpretation" class="scope-card"><div class="scope-head"><strong>本次查询口径</strong><span>✓ 已确认</span></div><div class="scope-grid"><div><small>数据表</small><strong>{{ turn.result.interpretation.table }}</strong></div><div><small>指标</small><strong>{{ turn.result.interpretation.metric }}</strong></div><div><small>维度</small><strong>{{ turn.result.interpretation.dimension }}</strong></div><div><small>时间</small><strong>{{ turn.result.interpretation.time_range }}</strong></div></div></div>
               <ReportCard v-if="turn.result.report" :report="turn.result.report" :sources="reportDataSources" />
-              <div v-if="turn.result.career_report" class="career-result-card"><strong>{{ turn.result.career_report.title }}</strong><p>{{ turn.result.career_report.summary }}</p><button @click="showCareerReport(turn.result.career_report)">查看完整分析报告</button></div>
-              <p v-else-if="turn.result.route !== 'database_query' && turn.result.analysis" class="qa-answer">{{ turn.result.analysis }}</p>
+              <div v-if="turn.result.career_report" class="career-result-card"><strong>{{ turn.result.career_report.title }}</strong><MarkdownReport :markdown="turn.result.career_report.summary" /><button @click="showCareerReport(turn.result.career_report)">查看完整分析报告</button></div>
+              <div v-if="turn.result.rag_used" class="rag-source-strip">已检索岗位 JD 证据 · 数据集 {{ turn.result.rag_index_version || "当前版本" }} · {{ turn.result.rag_sources?.length || 0 }} 段</div>
+              <MarkdownReport v-if="turn.result.route !== 'database_query' && turn.result.analysis" class="qa-answer" :markdown="turn.result.analysis" />
               <ResultTableCard v-if="turn.result.route === 'database_query' && turn.result.status === 'completed' && turn.result.rows.length" :title="turn.result.result_title || '查询结果'" :columns="turn.result.columns" :column-labels="turn.result.column_labels" :rows="turn.result.rows">
                 <template #actions><button class="result-action" @click="expandedSql = expandedSql === turn.result.task_id ? null : turn.result.task_id">{{ expandedSql === turn.result.task_id ? "收起 SQL" : "查看 SQL" }}</button><button class="result-action" :class="{ saved: turn.result.saved }" @click="saveResult(turn.result)">{{ turn.result.saved ? "已保存" : "保存结果" }}</button></template>
                 <template #details><div v-if="expandedSql === turn.result.task_id && turn.result.sql" class="result-card"><pre>{{ turn.result.sql }}</pre></div></template>
               </ResultTableCard>
-              <div v-if="turn.result.route === 'database_query' && turn.result.status !== 'waiting_clarification' && (turn.result.analysis || turn.result.message)" class="result-analysis" :class="{ 'empty-result': !turn.result.rows.length && !turn.result.analysis }"><strong>{{ turn.result.analysis ? "结果解读" : "查询结果" }}</strong><p>{{ turn.result.analysis || turn.result.message || "查询已完成，但没有返回可展示的数据。" }}</p></div>
+              <div v-if="turn.result.route === 'database_query' && turn.result.status !== 'waiting_clarification' && (turn.result.analysis || turn.result.message)" class="result-analysis" :class="{ 'empty-result': !turn.result.rows.length && !turn.result.analysis }"><strong>{{ turn.result.analysis ? "结果解读" : "查询结果" }}</strong><MarkdownReport :markdown='turn.result.analysis || turn.result.message || "查询已完成，但没有返回可展示的数据。"' /></div>
             </div></div>
           </article>
           <div v-if="loading && pendingQuery" class="user-message pending-user-message"><div class="message-avatar user">你</div><div class="message-body"><small>你</small><p>{{ pendingQuery }}</p></div></div>
@@ -704,12 +663,12 @@ function downloadCareerReport() {
         <div ref="conversationEnd" class="conversation-end" aria-hidden="true"></div>
       </div></Transition></section>
       <div v-if="error" class="error-banner">{{ error }}</div>
-      <footer class="composer"><div class="composer-box"><textarea v-model="input" rows="1" placeholder="输入岗位市场或求职分析问题…" @keydown="handleComposerKeydown" @compositionstart="startComposition" @compositionend="endComposition"></textarea><div class="composer-meta"><span>{{ contextSummary }}</span><div class="composer-actions"><label class="shortcut-control">提交方式<select v-model="submitShortcut"><option value="enter">按 Enter 提交</option><option value="metaEnter">按 ⌘+Enter 提交</option></select></label><button class="send-button" :disabled="loading || !input.trim()" aria-label="发送" @click="submit()">↑</button></div></div></div><small>建议先明确岗位关键词、城市和比较口径；若使用中文输入法，推荐“⌘+Enter 提交”。</small></footer>
+      <footer class="composer"><div class="composer-box"><textarea v-model="input" rows="1" placeholder="输入岗位市场或求职分析问题…" @keydown="handleComposerKeydown" @compositionstart="startComposition" @compositionend="endComposition"></textarea><div class="composer-meta"><span>{{ contextSummary }}</span><label class="rag-toggle"><input v-model="useJdRag" type="checkbox" /> <span>检索岗位 JD（RAG）</span></label><div class="composer-actions"><label class="shortcut-control">提交方式<select v-model="submitShortcut"><option value="enter">按 Enter 提交</option><option value="metaEnter">按 ⌘+Enter 提交</option></select></label><button class="send-button" :disabled="loading || !input.trim()" aria-label="发送" @click="submit()">↑</button></div></div></div><small>建议先明确岗位关键词、城市和比较口径；勾选“检索岗位 JD（RAG）”后，会使用当前岗位库中的 JD 证据回答。</small></footer>
     </main>
 
     <aside class="query-panel" :class="{ open: rightOpen }">
       <header class="panel-header"><div><p class="kicker">CAREER CONTEXT</p><h2>求职分析工具</h2></div><button @click="resetWorkspace">清空结果上下文</button></header>
-      <p class="context-intro">这里管理会影响后续分析的材料：岗位结果用于跨问题对比，简历用于与目标岗位做证据匹配。字段会由系统自动识别，无需手动拖拽。</p>
+      <p class="context-intro">这里管理会影响后续分析的材料：岗位结果用于跨问题对比，简历会自动随主输入框的问题提交。上传后直接提问即可，无需填写目标岗位表单。</p>
       <div class="context-summary">{{ contextSummary }}</div>
 
       <section class="context-block result-context-block"><div class="context-heading"><div><strong>已添加的岗位结果</strong><small>用于下一条问题的对比和综合分析</small></div><em>{{ selectedAnalysisTables.length }} 个</em></div><div class="analysis-tables-zone" :class="{ filled: selectedAnalysisTables.length, 'drop-ready': dragTarget === 'result' }" @dragover.prevent="setDragTarget('result')" @dragleave="clearDragTarget" @drop.prevent="dropAnalysisTable"><div v-if="!selectedAnalysisTables.length" class="empty-confirmation"><span>＋</span><strong>还没有添加岗位结果</strong><small>从下方结果列表点击“添加到分析上下文”，或拖入这里</small><button class="empty-action" @click="scrollToLibrary">去查看已保存结果</button></div><div v-for="table in selectedAnalysisTables" :key="table.taskId" class="analysis-table-chip"><span class="table-mark">▦</span><span><strong>{{ table.title }}</strong><small>{{ table.rowCount }} 行 · {{ table.query }}</small></span><button :aria-label="`移除${table.title}`" @click="removeAnalysisTable(table.taskId)">×</button></div></div></section>
@@ -718,17 +677,16 @@ function downloadCareerReport() {
       <section class="resume-context-block" :class="{ expanded: resumePanelOpen }">
         <button v-if="!resumePanelOpen" class="resume-upload-button resume-upload-entry" type="button" @click="openResumePanel"><span>＋</span>上传我的简历</button>
         <template v-else>
-          <div class="context-heading"><div><strong>我的简历</strong><small>上传后可分析技能覆盖与岗位匹配度</small></div><em v-if="resume">已就绪</em></div>
+          <div class="context-heading"><div><strong>我的简历</strong><small>上传后可在主输入框中直接提问分析</small></div><em v-if="resume">已就绪</em></div>
           <input ref="resumeInput" class="visually-hidden" type="file" accept=".txt,.text,.md,.markdown,.pdf,text/plain,application/pdf" @change="handleResumeSelected">
           <div v-if="resume" class="resume-ready"><span class="resume-icon">▤</span><div><strong>{{ resume.filename }}</strong><small>{{ resume.page_count }} 页 · {{ resume.skill_count }} 项技能 · {{ resume.project_count }} 个项目</small></div><button aria-label="删除当前简历" @click="removeResume">删除</button></div>
           <button v-else class="resume-upload-button" type="button" :disabled="resumeUploading" @click="openResumePicker"><span>＋</span>{{ resumeUploading ? "正在解析简历…" : "上传我的简历" }}</button>
           <ul class="resume-requirements"><li>支持 TXT / TEXT / MD / MARKDOWN / 可复制文本的 PDF</li><li>不超过 5 MB、最多 10 页；PDF 不能是扫描图片</li><li>文本建议使用 UTF-8，提取文本至少 10 个字符</li><li>暂不支持 DOC/DOCX、图片 OCR；仅保存结构化脱敏证据</li></ul>
           <p v-if="resumeError" class="panel-error">{{ resumeError }}</p>
-          <div class="resume-analysis-form"><label><span>目标岗位关键词</span><input v-model="careerTarget.keyword" placeholder="例如：Agent 开发工程师"></label><label><span>城市</span><input v-model="careerTarget.city" placeholder="例如：上海（必填）"></label><div class="resume-form-grid"><label><span>经验（可选）</span><input v-model="careerTarget.experience" placeholder="例如：3-5年"></label><label><span>学历（可选）</span><input v-model="careerTarget.degree" placeholder="例如：本科"></label></div><button class="career-analyze-button" :disabled="!resume || careerLoading" @click="openCareerDialog">{{ careerLoading ? "分析中…" : "开始简历与岗位分析" }}</button></div>
           <button class="resume-collapse-button" type="button" @click="resumePanelOpen = false">收起简历提示</button>
         </template>
       </section>
     </aside>
-    <CareerReportDialog :open="careerDialogOpen" :report="careerReport" :loading="careerLoading" :error="careerError" @close="careerDialogOpen = false" @retry="runCareerAnalysis" @download="downloadCareerReport" />
+    <CareerReportDialog :open="careerDialogOpen" :report="careerReport" @close="careerDialogOpen = false" @download="downloadCareerReport" />
   </div>
 </template>

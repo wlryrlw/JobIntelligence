@@ -30,6 +30,7 @@ from ..querying.models import SqlExecution
 from ..querying.response_generator import ResponseGenerator
 from ..querying.query_agent import QueryAgent
 from ..querying.schema_catalog import SchemaCatalogBuilder
+from ..rag import JdRagService, RagError
 from ..security import AccessScope
 from ..skills import SkillRegistry
 from .result_builder import ResultBuilder
@@ -68,6 +69,10 @@ class QueryWorkflow:
                 model_client=model_client,
                 use_llm=self.config.career_llm_enabled,
             ),
+        )
+        self.jd_rag = JdRagService(
+            self.config,
+            database_root=self.database_engine.database_root,
         )
         self.data_qa_agent = DataQaAgent(
             model_client,
@@ -142,6 +147,7 @@ class QueryWorkflow:
             has_data_context=bool(
                 state.get("recent_result_context") or state.get("analysis_context")
             ),
+            use_jd_rag=bool(state.get("use_jd_rag")),
         )
         emit_progress(
             "route_selected",
@@ -167,12 +173,14 @@ class QueryWorkflow:
                 "reason": decision.reason,
                 "response_type": decision.response_type,
                 "source": decision.source,
+                "career_mode": decision.career_mode,
             },
             "direct_response": decision.response,
             "standalone_query": decision.standalone_query,
             "rewritten": decision.rewritten,
             "target": explicit_target or parsed_target,
             "resume_id": explicit_resume_id or decision.resume_id,
+            "career_mode": decision.career_mode or state.get("career_mode"),
             "extraction": decision.extraction.public(),
             "execution_log": execution_log,
         }
@@ -382,7 +390,12 @@ class QueryWorkflow:
             resume_id=state.get("resume_id"),
             target=state.get("target"),
         )
-        decision = self.coordinator.decide(request, action="career_advice")
+        career_mode = str(state.get("career_mode") or "resume_gap")
+        decision = self.coordinator.decide(
+            request,
+            action="career_advice",
+            career_mode=career_mode,
+        )
         if decision.action == "clarify":
             clarification = decision.clarification.model_dump(mode="json") if decision.clarification else {
                 "parameter": "target",
@@ -417,18 +430,28 @@ class QueryWorkflow:
             return {"workflow_mode": "career_agent_failed", "result": result.model_dump(mode="json")}
         availability = decision.availability.model_dump(mode="json") if decision.availability else {}
         resource_log = {"stage": "resource_gate", "success": True, "availability": availability}
+        target = decision.target
+        if target is None:
+            raise CareerAgentError("Coordinator 未返回有效目标岗位")
+        if career_mode == "job_requirement":
+            return self._coordinate_job_requirement(state, decision, resource_log, target)
         user_id = str((state.get("access_scope") or {}).get("user_id") or "anonymous")
         resume_id = str(state.get("resume_id") or "")
+        rag_documents = []
         try:
             emit_progress("career_resume", "正在读取本地结构化简历证据")
             resume = self.resume_store.load(resume_id, user_id=user_id)
-            target = decision.target
-            if target is None:
-                raise CareerAgentError("Coordinator 未返回有效目标岗位")
             emit_progress("career_profile", "正在构建目标岗位画像")
             profile = self.career_agent.build_profile(target)
+            if state.get("use_jd_rag"):
+                emit_progress("career_rag", "正在检索岗位 JD 证据")
+                rag_documents = self.jd_rag.retrieve(
+                    state["query"], target, dataset_version=profile.dataset_version
+                )
+                if not rag_documents:
+                    raise RagError("岗位 JD RAG 没有返回与目标岗位匹配的证据")
             emit_progress("career_analysis", "正在生成证据约束的求职分析")
-            report = self.career_agent.analyze(resume, profile)
+            report = self.career_agent.analyze(resume, profile, rag_documents=rag_documents)
         except ResumeNotFound:
             clarification = {
                 "parameter": "resume_id",
@@ -449,7 +472,7 @@ class QueryWorkflow:
             }
         except QueryTimeoutError:
             raise
-        except (ResumeStoreError, CareerAgentError, JobProfileError, ValueError) as exc:
+        except (ResumeStoreError, CareerAgentError, JobProfileError, RagError, ValueError) as exc:
             execution_log = [
                 resource_log,
                 {
@@ -463,7 +486,7 @@ class QueryWorkflow:
                 status="failed",
                 route="career_advice",
                 message="求职分析失败。",
-                analysis="简历证据、岗位画像或结构化分析不可用，请修正输入或数据集后重试。",
+                analysis=f"简历证据、岗位画像或 JD RAG 不可用：{exc}",
                 route_reason=decision.reason,
                 steps=["意图路由：career_advice", "检查简历与岗位参数", "CareerAgent 执行失败并停止"],
                 workflow_mode="career_agent_failed",
@@ -511,8 +534,85 @@ class QueryWorkflow:
             workflow_mode="career_agent",
             execution_log=execution_log,
             dataset_version=profile.dataset_version,
+            rag_used=bool(rag_documents),
+            rag_index_version=profile.dataset_version if rag_documents else None,
+            rag_sources=[item.public_source() for item in rag_documents],
         )
         return {"workflow_mode": "career_agent", "result": result.model_dump(mode="json")}
+
+    def _coordinate_job_requirement(
+        self,
+        state: QueryState,
+        decision: Any,
+        resource_log: dict[str, Any],
+        target: Any,
+    ) -> dict[str, Any]:
+        """无简历的岗位要求问题：必须用 JD RAG，不生成简历匹配结论。"""
+
+        rag_documents = []
+        try:
+            emit_progress("career_profile", "正在构建目标岗位画像")
+            profile = self.career_agent.build_profile(target)
+            emit_progress("career_rag", "正在检索岗位 JD 证据")
+            rag_documents = self.jd_rag.retrieve(
+                state["query"], target, dataset_version=profile.dataset_version
+            )
+            emit_progress("career_analysis", "正在整理岗位要求分析")
+            answer = self.career_agent.answer_job_requirement(
+                state["query"], profile, rag_documents
+            )
+        except (CareerAgentError, JobProfileError, RagError, ValueError) as exc:
+            result = QueryResult(
+                task_id=state["task_id"],
+                status="failed",
+                route="career_advice",
+                message="岗位要求分析失败。",
+                analysis=f"岗位画像或 JD RAG 不可用：{exc}",
+                route_reason=decision.reason,
+                steps=[
+                    "意图路由：career_advice",
+                    "构建目标岗位画像",
+                    "检索岗位 JD 证据并停止",
+                ],
+                workflow_mode="career_agent_failed",
+                execution_log=[
+                    resource_log,
+                    {"stage": "career.job_requirement_failed", "success": False, "error_type": type(exc).__name__},
+                ],
+            )
+            return {"workflow_mode": "career_agent_failed", "result": result.model_dump(mode="json")}
+
+        result = QueryResult(
+            task_id=state["task_id"],
+            status="completed",
+            route="career_advice",
+            message="岗位要求分析完成。",
+            analysis=answer,
+            route_reason=decision.reason,
+            steps=[
+                "意图路由：career_advice",
+                "构建目标岗位画像",
+                "Milvus BM25 + Embedding 双路召回",
+                "RRF 融合并进行候选重排",
+                "基于岗位 JD 证据整理要求分析",
+            ],
+            workflow_mode="career_agent_job_requirement",
+            execution_log=[
+                resource_log,
+                {
+                    "stage": "career.rag_retrieval",
+                    "success": True,
+                    "dataset_version": profile.dataset_version,
+                    "hit_count": len(rag_documents),
+                    "rerank_enabled": self.config.rag_rerank_enabled,
+                },
+            ],
+            dataset_version=profile.dataset_version,
+            rag_used=True,
+            rag_index_version=profile.dataset_version,
+            rag_sources=[item.public_source() for item in rag_documents],
+        )
+        return {"workflow_mode": "career_agent_job_requirement", "result": result.model_dump(mode="json")}
 
     @staticmethod
     def _database_for_query(state: QueryState) -> str:

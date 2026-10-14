@@ -1,0 +1,6 @@
+{
+  "dataset_version": "ds_af5727e4d1442e2f68962480",
+  "document_count": 98,
+  "embedding_model": "text-embedding-v3",
+  "embedding_dimension": 1024
+}

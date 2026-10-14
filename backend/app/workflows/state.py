@@ -23,6 +23,8 @@ class QueryState(TypedDict, total=False):
     rewritten: bool
     target: dict[str, Any] | None
     resume_id: str | None
+    use_jd_rag: bool
+    career_mode: str | None
     extraction: dict[str, Any]
     schema_context: str
     schema_tables: list[dict[str, str]]

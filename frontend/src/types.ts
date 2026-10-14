@@ -176,6 +176,21 @@ export interface QueryResult {
   crawl_run_id?: string | null
   report?: AnalysisReport | null
   career_report?: CareerReport | null
+  rag_used?: boolean
+  rag_index_version?: string | null
+  rag_sources?: Array<{
+    chunk_id: string
+    job_id: string
+    title: string
+    company: string
+    city: string
+    experience: string
+    dataset_version: string
+    source_url: string
+    rrf_score: number
+    rerank_score?: number | null
+    snippet: string
+  }>
   report_tool_calls?: ReportToolCall[]
   attempts?: SqlAttempt[]
   dataset_version?: string | null

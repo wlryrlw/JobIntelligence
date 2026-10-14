@@ -235,8 +235,6 @@ button { cursor: pointer; }
 .chat-header > div strong, .chat-header > div span { display: block; }
 .chat-header > div strong { max-width: 320px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; }
 .chat-header > div span { margin-top: 2px; color: #98a09b; font-size: 8px; }
-.model-state { margin-left: auto; padding: 5px 9px; border-radius: 999px; color: #567064; background: #f0f5f2; font-size: 9px; }
-.model-state i { display: inline-block; width: 5px; height: 5px; margin-right: 5px; border-radius: 50%; background: #32a86d; }
 .mobile-menu, .config-trigger { display: none; border: 0; background: transparent; }
 
 .conversation-scroll { flex: 1; min-height: 0; overflow-y: auto; padding: 28px clamp(24px, 6vw, 76px); scroll-behavior: smooth; }
@@ -428,6 +426,8 @@ tbody tr:hover { background: #f8fbf9; }
 .composer textarea { width: 100%; min-height: 26px; resize: none; border: 0; outline: 0; color: #2f3c35; background: transparent; font-size: 11px; line-height: 1.5; }
 .composer-meta { display: flex; align-items: center; justify-content: space-between; margin-top: 4px; }
 .composer-meta > span { min-width: 0; overflow: hidden; color: #a0a8a3; font-size: 8px; text-overflow: ellipsis; white-space: nowrap; }
+.rag-toggle { display: inline-flex; align-items: center; gap: 5px; flex: none; color: #6f8176; font-size: 9px; white-space: nowrap; cursor: pointer; }
+.rag-toggle input { width: 13px; height: 13px; margin: 0; accent-color: #287a57; }
 .composer-actions { display: flex; align-items: center; gap: 8px; flex: none; }
 .shortcut-control { display: flex; align-items: center; gap: 5px; color: #8e9992; font-size: 8px; white-space: nowrap; }
 .shortcut-control > span { color: #a0a8a3; }
@@ -499,7 +499,6 @@ tbody tr:hover { background: #f8fbf9; }
   .query-panel { position: fixed; inset: 0 0 0 auto; z-index: 40; width: 324px; transform: translateX(100%); box-shadow: -18px 0 45px rgba(25, 42, 33, .12); transition: .2s; }
   .query-panel.open { transform: translateX(0); }
   .config-trigger { display: block; margin-left: auto; padding: 6px 9px; border-radius: 7px; color: #4c6256; background: #eef3ef; font-size: 9px; }
-  .model-state { margin-left: 0; }
 }
 
 @media (max-width: 720px) {
@@ -515,7 +514,6 @@ tbody tr:hover { background: #f8fbf9; }
   .history-sidebar.open { transform: translateX(0); }
   .chat-column { width: 100vw; }
   .mobile-menu { display: block; }
-  .model-state { display: none; }
   .chat-header { padding: 0 15px; }
   .conversation-scroll { padding: 22px 15px; }
   .prompt-list { grid-template-columns: 1fr; }
@@ -540,6 +538,13 @@ tbody tr:hover { background: #f8fbf9; }
 .assistant-body { width: min(100%, 820px); }
 .message-body > small { font-size: var(--font-caption); }
 .qa-answer, .result-analysis p { font-size: var(--font-body); line-height: var(--line-body); }
+.qa-answer.markdown-body, .result-analysis .markdown-body, .career-result-card .markdown-body { padding: 0; }
+.result-analysis .markdown-body { color: #3d4942; font-size: 12px; line-height: 1.75; }
+.result-analysis .markdown-body p { margin: 0 0 8px; }
+.result-analysis .markdown-body p:last-child { margin-bottom: 0; }
+.career-result-card .markdown-body { color: #53685c; font-size: var(--font-body); line-height: var(--line-body); }
+.career-result-card .markdown-body p { margin: 7px 0 10px; }
+.rag-source-strip { margin-top: 8px; color: #6f8176; font-size: var(--font-caption); }
 .data-table { font-size: 12px; }
 .data-table th { font-size: 11px; }
 .data-table td { font-size: 12px; }
@@ -571,10 +576,9 @@ tbody tr:hover { background: #f8fbf9; }
 .resume-ready strong, .resume-ready small { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }.resume-ready strong { color: #315440; font-size: var(--font-small); }.resume-ready small { margin-top: 3px; color: #789081; font-size: var(--font-caption); }.resume-ready button { border: 0; color: #a05248; background: transparent; font-size: var(--font-caption); }
 .resume-upload-button { display: flex; width: 100%; min-height: 48px; align-items: center; justify-content: center; gap: 8px; margin-top: 10px; border: 1px dashed #99c5a9; border-radius: 10px; color: #2d7653; background: #f4fbf6; font-size: 14px; font-weight: 700; }.resume-upload-button span { font-size: 20px; font-weight: 400; }.resume-upload-button:disabled { cursor: wait; opacity: .6; }
 .resume-requirements { margin: 10px 0 0; padding-left: 17px; color: #7b8b81; font-size: var(--font-caption); line-height: 1.65; }.resume-requirements li + li { margin-top: 2px; }.panel-error, .panel-success { margin: 9px 0 0; padding: 8px 10px; border-radius: 8px; font-size: var(--font-caption); line-height: 1.55; }.panel-error { border: 1px solid #efd2cd; color: #a14d43; background: #fff6f4; }.panel-success { border: 1px solid #cfe4d6; color: #2d7653; background: #f2faf4; }
-.resume-analysis-form { display: grid; gap: 9px; margin-top: 14px; }.resume-analysis-form label { display: block; }.resume-analysis-form label > span { display: block; margin: 0 0 4px 1px; color: #69776f; font-size: var(--font-caption); font-weight: 700; }.resume-analysis-form input { width: 100%; min-height: 34px; padding: 0 9px; border: 1px solid #d8e2db; border-radius: 7px; outline: 0; color: #33473b; background: #fff; font-size: var(--font-small); }.resume-analysis-form input:focus { border-color: #70aa88; box-shadow: 0 0 0 3px rgba(67, 139, 94, .1); }.resume-form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }.career-analyze-button { min-height: 38px; margin-top: 3px; border: 0; border-radius: 8px; color: #fff; background: #267653; font-size: var(--font-small); font-weight: 700; }.career-analyze-button:disabled { cursor: default; opacity: .45; }
 .career-result-card { margin: 10px 0 14px; padding: 15px 16px; border: 1px solid #cfe3d5; border-radius: 12px; background: #f4faf6; }.career-result-card strong { color: #296b4b; font-size: 15px; }.career-result-card p { margin: 7px 0 10px; color: #53685c; font-size: var(--font-body); line-height: var(--line-body); }.career-result-card button { min-height: 32px; padding: 0 11px; border: 1px solid #b8d8c2; border-radius: 7px; color: #2a714e; background: #fff; font-size: var(--font-small); font-weight: 700; }
 .composer textarea { min-height: 34px; font-size: var(--font-body); line-height: 1.6; }.composer-meta > span, .shortcut-control, .shortcut-control select { font-size: var(--font-caption); }.shortcut-control select { min-height: 34px; font-size: var(--font-caption); }.composer-meta button { width: 34px; height: 34px; }.composer > small { font-size: var(--font-caption); }
-@media (max-width: 620px) { .user-message .message-body { max-width: 88%; }.query-panel { padding: 20px 16px; }.resume-form-grid { grid-template-columns: 1fr; } }
+@media (max-width: 620px) { .user-message .message-body { max-width: 88%; }.query-panel { padding: 20px 16px; } }
 
 /* Stage 6 crawl controls and long-running progress. */
 .crawl-panel { margin-top: 18px; padding: 15px 0 18px; border-top: 1px solid #e4ebe6; border-bottom: 1px solid #e4ebe6; }
@@ -709,22 +713,22 @@ body { color: #1b1b1b; background: #f5f5f5; }
 .app-layout { background: #fafafa; }.history-sidebar { background: #f0f0f0; border-right-color: #d9d9d9; }.brand-row { padding-left: 9px; }.brand-row strong { color: #111; }
 .message-avatar.assistant { color: #fff; background: #1c1c1c; }.new-chat span { color: #222; }.new-chat:hover { border-color: #aaa; background: #fafafa; }.history-item:hover, .history-item.active { background: #dedede; }
 .prompt-list span { color: #222; }.answer-heading > span { color: #333; background: #ededed; }
-.chat-header, .query-panel { background: #fff; }.model-state i { background: #222; }.config-trigger { color: #333; background: #ededed; }
-.result-toolbar .save-result, .data-card .save-result, .career-analyze-button, .crawl-start { color: #fff; background: #1b1b1b; }.result-toolbar .save-result:disabled, .data-card .save-result:disabled { color: #777; background: #ddd; }
+.chat-header, .query-panel { background: #fff; }.config-trigger { color: #333; background: #ededed; }
+.result-toolbar .save-result, .data-card .save-result, .crawl-start { color: #fff; background: #1b1b1b; }.result-toolbar .save-result:disabled, .data-card .save-result:disabled { color: #777; background: #ddd; }
 .loading-copy > span { border-color: #ddd; border-top-color: #222; }.standalone-query { border-left-color: #777; color: #555; background: #f4f4f4; }.execution-strip i { background: #222; }
 .context-summary, .analysis-tables-zone, .resume-ready, .career-result-card { border-color: #ddd; background: #f5f5f5; }.context-add-button { border-color: #cfcfcf; color: #333; background: #f8f8f8; }.context-add-button:hover { border-color: #999; background: #eee; }.context-add-button.added, .context-add-button:disabled { border-color: #ddd; color: #777; background: #e9e9e9; }
-.resume-context-block:not(.expanded) { padding: 12px 0; }.resume-upload-button { border-color: #aaa; color: #222; background: #f7f7f7; }.resume-upload-button:hover:not(:disabled) { border-color: #555; background: #eee; }.resume-icon { color: #222; background: #e4e4e4; }.career-analyze-button:disabled { background: #bdbdbd; }
+.resume-context-block:not(.expanded) { padding: 12px 0; }.resume-upload-button { border-color: #aaa; color: #222; background: #f7f7f7; }.resume-upload-button:hover:not(:disabled) { border-color: #555; background: #eee; }.resume-icon { color: #222; background: #e4e4e4; }
 .resume-collapse-button { width: 100%; min-height: 30px; margin-top: 10px; border: 1px solid #d0d0d0; border-radius: 7px; color: #555; background: #fff; font-size: var(--font-caption); }
 .crawl-launcher { border-color: #cfcfcf; color: #222; background: #f7f7f7; }.crawl-launcher:hover { border-color: #888; background: #ededed; box-shadow: 0 5px 15px rgba(0, 0, 0, .07); }.crawl-launcher-icon { color: #fff; background: #222; }.crawl-launcher small { color: #777; }
 .market-summary-card, .market-run-card { border-color: #ddd; background: #fafafa; }.market-summary-heading strong, .market-summary-counts strong { color: #222; }.market-summary-counts div, .market-run-stats span { background: #ededed; }.market-summary-breakdown em { color: #555; background: #ededed; }
 .market-summary-heading button, .market-summary-actions button, .market-summary-actions .market-history-button { border-color: #ccc; color: #333; background: #f5f5f5; }.market-summary-heading button:hover, .market-summary-actions .market-history-button:hover { border-color: #888; background: #e9e9e9; }
 .crawl-modal-backdrop, .market-history-backdrop { background: rgba(0, 0, 0, .48); }.crawl-modal, .market-history-modal { border-color: #d7d7d7; box-shadow: 0 24px 70px rgba(0, 0, 0, .24); }.crawl-modal-header, .market-history-header { border-bottom-color: #e5e5e5; background: #fafafa; }.crawl-modal-header .kicker, .market-history-header .kicker { color: #555; }.crawl-modal-header h2, .market-history-header h2 { color: #1d1d1d; }
-.history-footer i, .model-state i, .bar-row i { background: #222; }.kicker, .report-header small, .scope-head span { color: #555; }.report-header .pdf-export { border-color: #222; background: #222; }.report-header .pdf-export:hover { border-color: #000; background: #000; }.bar-row i { background: #222; }.markdown-body code { color: #333; background: #ededed; }.user-message .message-body p { color: #333; background: #ededed; }
+.history-footer i, .bar-row i { background: #222; }.kicker, .report-header small, .scope-head span { color: #555; }.report-header .pdf-export { border-color: #222; background: #222; }.report-header .pdf-export:hover { border-color: #000; background: #000; }.bar-row i { background: #222; }.markdown-body code { color: #333; background: #ededed; }.user-message .message-body p { color: #333; background: #ededed; }
 .chat-column, .composer { background: #fafafa; }.prompt-list button:hover { border-color: #999; box-shadow: 0 8px 22px rgba(0, 0, 0, .06); }.prompt-list button { color: #444; border-color: #ddd; }.message-avatar.user { color: #fff; background: #444; }.qa-answer, .markdown-body { color: #333; }.turn + .turn { border-top-color: #e5e5e5; }
 .report-card, .analysis-chart { border-color: #ddd; background: #fff; box-shadow: 0 12px 35px rgba(0, 0, 0, .045); }.report-header { border-bottom-color: #e5e5e5; background: linear-gradient(135deg, #fff, #f5f5f5); }.report-header h2, .analysis-chart header strong, .markdown-body h1, .markdown-body h2, .markdown-body h3 { color: #222; }.report-header button { border-color: #d0d0d0; color: #444; }.report-header button:hover { border-color: #888; background: #f5f5f5; }.analysis-chart header small, .analysis-chart header > span, .chart-empty { color: #777; }.bar-row > span, .bar-row strong, .pie-legend span, .pie-legend strong { color: #555; }.pie-disc > span { color: #333; }.pie-disc small { color: #888; }.markdown-body blockquote { border-left-color: #888; color: #555; background: #f2f2f2; }.markdown-body hr, .markdown-table-wrap { border-color: #e1e1e1; }
 .result-card pre, .data-card pre { color: #eee; background: #252525; }.result-action.saved { color: #444; background: #e8e8e8; }.composer-meta button { background: #1b1b1b; }.shortcut-control select { color: #444; background: #f5f5f5; }.shortcut-control select:focus { border-color: #888; box-shadow: 0 0 0 2px rgba(0, 0, 0, .08); }
 .context-summary { color: #444; background: #f2f2f2; }.analysis-tables-zone.drop-ready { border-color: #888; background: #f0f0f0; box-shadow: 0 0 0 2px rgba(0, 0, 0, .06); }.analysis-tables-zone.filled { border-color: #c5c5c5; background: #f7f7f7; }.analysis-table-chip strong { color: #333; }.analysis-table-chip small { color: #888; }.table-mark { color: #333; background: #e4e4e4; }.scope-head span { color: #555; }.result-analysis { border-left-color: #999; }.result-toolbar { border-bottom-color: #e5e5e5; }.result-toolbar .save-result, .data-card .save-result { border: 0; color: #fff; background: #222; }.result-toolbar .save-result:disabled, .data-card .save-result:disabled { color: #777; background: #ddd; }
-.resume-ready strong { color: #333; }.resume-ready small, .resume-requirements, .resume-analysis-form label > span { color: #777; }.resume-ready { border-color: #d5d5d5; }.panel-success { border-color: #d5d5d5; color: #555; background: #f4f4f4; }.resume-analysis-form input, .crawl-form input, .crawl-form select { border-color: #d5d5d5; color: #333; }.resume-analysis-form input:focus, .crawl-form input:focus, .crawl-form select:focus { border-color: #888; box-shadow: 0 0 0 3px rgba(0, 0, 0, .08); }
+.resume-ready strong { color: #333; }.resume-ready small, .resume-requirements { color: #777; }.resume-ready { border-color: #d5d5d5; }.panel-success { border-color: #d5d5d5; color: #555; background: #f4f4f4; }.crawl-form input, .crawl-form select { border-color: #d5d5d5; color: #333; }.crawl-form input:focus, .crawl-form select:focus { border-color: #888; box-shadow: 0 0 0 3px rgba(0, 0, 0, .08); }
 .crawl-panel { border-color: #ddd; }.crawl-browser-actions button, .crawl-run-actions button { border-color: #ccc; color: #444; background: #f5f5f5; }.crawl-preflight.ready, .crawl-dot.ready { color: #444; }.crawl-check input { accent-color: #222; }.crawl-run-card, .market-summary-card, .market-run-card { border-color: #d8d8d8; background: #f7f7f7; }.crawl-run-heading strong, .crawl-progress-overview strong, .market-run-heading strong, .market-summary-heading strong, .market-summary-counts strong { color: #333; }.crawl-progress-track { background: #ddd; }.crawl-progress-track i { background: #333; }.crawl-progress-overview > div { border-color: #d8d8d8; background: #ededed; }.crawl-current-message, .crawl-current-item, .market-run-features, .market-run-version { color: #555; }.crawl-progress-log { border-color: #ddd; }.crawl-waiting-card { border-color: #d5d5d5; color: #555; background: #f1f1f1; }.crawl-waiting-icon { color: #333; background: #ddd; }.crawl-launcher { border-color: #ccc; color: #333; background: #f5f5f5; }.crawl-launcher:hover { border-color: #888; background: #ededed; }.crawl-launcher-icon { background: #222; }.market-summary-heading button, .market-summary-actions button, .market-summary-actions .market-history-button { color: #444; background: #f2f2f2; }.market-summary-counts div, .market-run-stats span, .market-summary-breakdown em { color: #555; background: #e8e8e8; }.market-run-status-ready { color: #444; background: #e5e5e5; }
 .query-panel { display: flex; flex-direction: column; }
 .result-library { margin-top: 32px; }

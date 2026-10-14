@@ -29,6 +29,8 @@ class QueryRequest(BaseModel):
     # 求职分析的显式上下文。不能要求模型从自然语言中猜测随机 resume_id。
     resume_id: str | None = Field(default=None, min_length=8, max_length=200)
     target: TargetJobRequest | None = None
+    # 只有显式勾选“检索岗位 JD（RAG）”时才打开岗位证据检索。
+    use_jd_rag: bool = False
 
 
 class ClarificationRequest(BaseModel):
@@ -107,6 +109,9 @@ class QueryResult(BaseModel):
     crawl_run_id: str | None = None
     report: AnalysisReport | None = None
     career_report: CareerReport | None = None
+    rag_used: bool = False
+    rag_index_version: str | None = None
+    rag_sources: list[dict[str, Any]] = Field(default_factory=list)
     report_tool_calls: list[dict[str, Any]] = Field(default_factory=list)
     elapsed_ms: int | None = Field(default=None, ge=0)
     error_code: str | None = Field(default=None, max_length=100)

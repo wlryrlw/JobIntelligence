@@ -60,6 +60,7 @@ class OfferAgentService:
         *,
         resume_id: str | None = None,
         target: TargetJobRequest | None = None,
+        use_jd_rag: bool = False,
         task_id: str | None = None,
     ) -> QueryResult:
         """异步 API 入口：采集副作用只创建任务，普通查询放到受控线程边界。"""
@@ -107,6 +108,7 @@ class OfferAgentService:
                             access_scope.user_id,
                             resume_id=resume_id,
                             target=target,
+                            use_jd_rag=use_jd_rag,
                             task_id=run_task_id,
                         ),
                         timeout=max(1.0, self.config.query_timeout_seconds + 2),
@@ -237,6 +239,7 @@ class OfferAgentService:
         *,
         resume_id: str | None = None,
         target: TargetJobRequest | None = None,
+        use_jd_rag: bool = False,
         task_id: str | None = None,
         event_sink: ProgressSink | None = None,
     ) -> QueryResult:
@@ -256,6 +259,7 @@ class OfferAgentService:
                         user_id,
                         resume_id=resume_id,
                         target=target,
+                        use_jd_rag=use_jd_rag,
                         task_id=task_id,
                     )
             return self._submit_inner(
@@ -265,6 +269,7 @@ class OfferAgentService:
                 user_id,
                 resume_id=resume_id,
                 target=target,
+                use_jd_rag=use_jd_rag,
                 task_id=task_id,
             )
         except QueryTimeoutError as exc:
@@ -297,6 +302,7 @@ class OfferAgentService:
         *,
         resume_id: str | None = None,
         target: TargetJobRequest | None = None,
+        use_jd_rag: bool = False,
         task_id: str,
     ) -> QueryResult:
         normalized = query.strip()
@@ -330,6 +336,7 @@ class OfferAgentService:
                     access_scope.public(),
                     resume_id=resume_id,
                     target=target,
+                    use_jd_rag=use_jd_rag,
                 ),
                 task_id,
             )
@@ -580,6 +587,7 @@ class OfferAgentService:
         *,
         resume_id: str | None = None,
         target: TargetJobRequest | None = None,
+        use_jd_rag: bool = False,
     ) -> dict[str, Any]:
         analysis_context, analysis_sources = self.context.analysis_context(session_id, workspace)
         return {
@@ -589,6 +597,7 @@ class OfferAgentService:
             "workspace": self.context.query_workspace(workspace),
             "resume_id": resume_id,
             "target": target.model_dump(mode="json") if target else None,
+            "use_jd_rag": use_jd_rag,
             "access_scope": access_scope or self.access_controller.resolve(None).public(),
             "route_context": self.context.route_context(session_id, workspace),
             "short_term_context": self.context.short_term_context(session_id),
