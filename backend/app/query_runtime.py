@@ -81,7 +81,7 @@ class QueryRuntime:
         )
 
 
-_runtime: ContextVar[QueryRuntime | None] = ContextVar("offeragent_query_runtime", default=None)
+_runtime: ContextVar[QueryRuntime | None] = ContextVar("jobintel_query_runtime", default=None)
 
 
 def current_query_runtime() -> QueryRuntime | None:

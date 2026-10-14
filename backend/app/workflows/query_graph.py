@@ -210,7 +210,7 @@ class QueryWorkflow:
 
     def _respond_directly(self, state: QueryState) -> dict[str, Any]:
         """返回预处理模型生成的普通回答或自然语言澄清。"""
-        emit_progress("direct_response", "正在整理 OfferAgent 回复")
+        emit_progress("direct_response", "正在整理 JobIntel 回复")
         result = ResultBuilder.direct_response(
             state["task_id"],
             state.get("direct_response", ""),

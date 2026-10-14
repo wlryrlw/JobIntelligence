@@ -1,1 +1,1 @@
-"""OfferAgent backend package."""
+"""JobIntel backend package."""

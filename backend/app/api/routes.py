@@ -39,7 +39,7 @@ from ..market_data import (
 )
 from ..query_runtime import QueryRunForbidden, QueryRunNotFound
 from ..security import AuthService, AuthUser
-from ..services.offeragent_service import OfferAgentService
+from ..services.jobintel_service import JobIntelService
 
 
 router = APIRouter(prefix="/api")
@@ -47,7 +47,7 @@ auth_service = AuthService()
 fake_executor = default_fake_executor(BASE_DIR)
 resume_store = ResumeStore()
 crawl_manager = CrawlRunManager()
-service = OfferAgentService(crawl_manager=crawl_manager)
+service = JobIntelService(crawl_manager=crawl_manager)
 market_data_summary = MarketDataSummaryService()
 
 

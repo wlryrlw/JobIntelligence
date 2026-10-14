@@ -1,4 +1,4 @@
-"""手动运行：检查 OfferAgent 当前岗位数据契约和 MCP 数据库边界。"""
+"""手动运行：检查 JobIntel 当前岗位数据契约和 MCP 数据库边界。"""
 
 import sys
 from pathlib import Path

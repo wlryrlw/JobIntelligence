@@ -24,7 +24,7 @@ class CountingModel:
                     "confidence": 0.95,
                     "reason": "产品身份问题由正常直接回复路由处理",
                     "response": (
-                        "我是 OfferAgent，一个面向求职场景的 AI 求职决策系统。"
+                        "我是 JobIntel，一个面向求职场景的 AI 求职决策系统。"
                         "底层大模型由当前部署配置决定。"
                     ),
                     "response_type": "answer",
@@ -87,7 +87,7 @@ class RequestPreprocessorTest(unittest.TestCase):
         self.assertEqual(model.calls, 1)
         self.assertEqual(result.action, "direct_response")
         self.assertEqual(result.source, "model")
-        self.assertIn("OfferAgent", result.response)
+        self.assertIn("JobIntel", result.response)
         self.assertIn("底层大模型", result.response)
         self.assertNotIn("预处理器", result.response)
 

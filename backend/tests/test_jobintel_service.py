@@ -1,7 +1,7 @@
 import unittest
 
 from app.config import Settings
-from app.service import OfferAgentService
+from app.service import JobIntelService
 
 
 class ModelStub:
@@ -11,12 +11,12 @@ class ModelStub:
         raise AssertionError("该测试不应调用模型")
 
 
-class OfferAgentServiceTest(unittest.TestCase):
+class JobIntelServiceTest(unittest.TestCase):
     def setUp(self) -> None:
         model = ModelStub()
-        self.service = OfferAgentService(model, config=Settings())
+        self.service = JobIntelService(model, config=Settings())
 
-    def test_service_and_visible_schema_are_offeragent_job_domain(self) -> None:
+    def test_service_and_visible_schema_are_jobintel_job_domain(self) -> None:
         schema = self.service.visible_schema("demo_candidate")
 
         self.assertTrue(schema)

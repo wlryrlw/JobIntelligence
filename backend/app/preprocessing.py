@@ -81,7 +81,7 @@ class RequestPreprocessor:
                 career_mode="job_requirement",
                 source="user_jd_rag_toggle" if use_jd_rag else "jd_requirement_rule",
             )
-        system = """你负责 OfferAgent 的请求理解与回复路由。根据用户问题选择正确的下游能力，
+        system = """你负责 JobIntel 的请求理解与回复路由。根据用户问题选择正确的下游能力，
 但不能把内部模块当成产品身份向用户介绍。
 
 意图边界：

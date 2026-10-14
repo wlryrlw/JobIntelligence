@@ -171,7 +171,7 @@ function pageLabel(item: MarketDataRun) {
 async function deleteRun(item: MarketDataRun) {
   if (!item.deletable || deletingRunId.value) return
   const confirmed = window.confirm(
-    `确定删除 ${formatDate(item.finished_at)} 的采集数据吗？这会重建当前岗位信息，删除后不可从 OfferAgent 恢复。`,
+    `确定删除 ${formatDate(item.finished_at)} 的采集数据吗？这会重建当前岗位信息，删除后不可从 JobIntel 恢复。`,
   )
   if (!confirmed) return
   deletingRunId.value = item.run_id

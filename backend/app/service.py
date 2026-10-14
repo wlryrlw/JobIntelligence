@@ -1,5 +1,5 @@
-"""OfferAgent 服务入口的稳定导入路径。"""
+"""JobIntel 服务入口的稳定导入路径。"""
 
-from .services.offeragent_service import OfferAgentService
+from .services.jobintel_service import JobIntelService
 
-__all__ = ["OfferAgentService"]
+__all__ = ["JobIntelService"]

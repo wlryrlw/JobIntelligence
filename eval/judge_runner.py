@@ -173,7 +173,7 @@ async def run_judge(
             f"开始 Judge 评测：dataset={dataset.name}，mode={mode}，共 {total_cases} 个 case。"
         )
 
-    with tempfile.TemporaryDirectory(prefix="offeragent-judge-") as temporary:
+    with tempfile.TemporaryDirectory(prefix="jobintel-judge-") as temporary:
         database_root = _prepare_database(Path(temporary))
         engine = DuckDbEngine(database_root)
         scope = _scope()
@@ -283,7 +283,7 @@ async def run_judge(
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description="运行 OfferAgent 的可选 LLM-as-judge 评测")
+    parser = argparse.ArgumentParser(description="运行 JobIntel 的可选 LLM-as-judge 评测")
     parser.add_argument("--dataset", choices=("seed", "eval_dev", "eval_test"), default="eval_test")
     parser.add_argument("--mode", choices=("single", "reference"), default="reference")
     parser.add_argument("--api-key", default=None, help="可选；更推荐使用 JUDGE_API_KEY")

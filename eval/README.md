@@ -1,4 +1,4 @@
-# OfferAgent 离线评测
+# JobIntel 离线评测
 
 确定性评测只使用 `data/fixtures/jobs_seed.json` 和本地 DuckDB 临时目录，不调用真实 LLM、BOSS 直聘或外部网络。数据分为三路；可选的 LLM-as-judge 是独立命令，不会被确定性 runner 或 pytest 自动调用：
 

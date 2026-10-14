@@ -1,7 +1,7 @@
 [project]
-name = "offeragent"
+name = "jobintel"
 version = "0.1.0"
-description = "OfferAgent：基于 Multi-Agent 与 NL2SQL 的智能求职决策系统"
+description = "JobIntel：基于 Multi-Agent 与 NL2SQL 的智能求职决策系统"
 readme = "README.md"
 requires-python = ">=3.11,<3.12"
 dependencies = [
@@ -51,7 +51,7 @@ pythonpath = [
     "integrations/boss_zhipin",
 ]
 
-[tool.offeragent.integrations.boss_zhipin]
+[tool.jobintel.integrations.boss_zhipin]
 # BOSS 集成自身的版本，供集成测试和文档版本守卫读取；不等同于
-# OfferAgent 项目整体版本。
+# JobIntel 项目整体版本。
 version = "2.2.0"

@@ -25,8 +25,8 @@ def create_local_mcp_server(
     database_engine = engine or DuckDbEngine()
     scope = access_scope or AccessController().resolve(None)
     server = MCPServer(
-        name="offeragent-local-tools",
-        title="OfferAgent本地数据库工具服务",
+        name="jobintel-local-tools",
+        title="JobIntel本地数据库工具服务",
         description="提供按用户权限隔离的本地数据库只读查询工具。",
         instructions="调用数据库工具前先根据Schema图生成一条只读DuckDB SQL。",
     )

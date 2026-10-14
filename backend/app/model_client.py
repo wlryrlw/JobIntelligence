@@ -13,7 +13,7 @@ from .query_runtime import QueryTimeoutError, current_query_runtime
 
 
 class ModelClient:
-    """OfferAgent 主模型客户端。"""
+    """JobIntel 主模型客户端。"""
 
     def __init__(self, config: Settings | None = None) -> None:
         self.config = config or settings

@@ -17,9 +17,9 @@ async def lifespan(_: FastAPI):
 
 
 app = FastAPI(
-    title="OfferAgent API",
+    title="JobIntel API",
     version="0.2.0",
-    description="OfferAgent 求职决策系统 API，支持岗位市场查询、求职分析和 Human-in-the-loop 工作流",
+    description="JobIntel 求职决策系统 API，支持岗位市场查询、求职分析和 Human-in-the-loop 工作流",
     lifespan=lifespan,
 )
 app.add_middleware(

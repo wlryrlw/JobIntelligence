@@ -1,10 +1,10 @@
-# OfferAgent 工程规范
+# JobIntel 工程规范
 
-本文件适用于 OfferAgent 仓库根目录及其子目录。更深层目录中的 `AGENTS.md` 可以为某个集成提供更具体的局部规则；局部规则只在其目录作用域内生效，不应覆盖 OfferAgent 的整体架构边界。
+本文件适用于 JobIntel 仓库根目录及其子目录。更深层目录中的 `AGENTS.md` 可以为某个集成提供更具体的局部规则；局部规则只在其目录作用域内生效，不应覆盖 JobIntel 的整体架构边界。
 
 ## 项目边界
 
-OfferAgent 是一个基于 Multi-Agent、NL2SQL 和岗位数据 ETL 的本地求职决策系统。主要目录职责如下：
+JobIntel 是一个基于 Multi-Agent、NL2SQL 和岗位数据 ETL 的本地求职决策系统。主要目录职责如下：
 
 - `backend/`：FastAPI、任务工作流、Agent、ETL、查询引擎、运行时存储和 API。
 - `frontend/`：Vue 前端和任务执行轨迹展示。
@@ -54,4 +54,4 @@ OfferAgent 是一个基于 Multi-Agent、NL2SQL 和岗位数据 ETL 的本地求
 - 不使用破坏性 Git 操作，不主动执行 `git reset --hard`、`git checkout --` 或大范围删除。
 - 不主动创建 commit、分支、PR 或执行远程发布，除非用户明确要求。
 - `docs/Design document.md` 是项目正式设计资料；`docs/notes/` 是学习笔记。除非用户明确要求，不修改或填写 `docs/notes/`。
-- 修改 API、行为或公开配置时，更新相应的项目文档和测试；不要把 scraper 的 README 双语同步或集成版本号规则扩展到整个 OfferAgent。
+- 修改 API、行为或公开配置时，更新相应的项目文档和测试；不要把 scraper 的 README 双语同步或集成版本号规则扩展到整个 JobIntel。

@@ -1,1 +1,1 @@
-"""OfferAgent backend tests."""
+"""JobIntel backend tests."""

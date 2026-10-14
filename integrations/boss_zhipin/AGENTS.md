@@ -1,6 +1,6 @@
 # AGENTS.md
 
-本文件只适用于 `integrations/boss_zhipin/` 及其子目录。它描述 BOSS 直聘 CDP 采集集成的局部规则；OfferAgent 根目录、`backend/`、`frontend/`、`eval/`、`data/` 和 `docs/` 以仓库根目录的 `AGENTS.md` 为准。先读适用范围内的规则，再动代码。
+本文件只适用于 `integrations/boss_zhipin/` 及其子目录。它描述 BOSS 直聘 CDP 采集集成的局部规则；JobIntel 根目录、`backend/`、`frontend/`、`eval/`、`data/` 和 `docs/` 以仓库根目录的 `AGENTS.md` 为准。先读适用范围内的规则，再动代码。
 
 ## 这是什么
 
@@ -19,7 +19,7 @@ tests/test_job_summary.py     # 摘要测试
 SKILL.md / README(.en).md / CHANGELOG.md / CONTRIBUTING.md
 ```
 
-**重要边界：本集成的核心抓取逻辑都放 `scripts/boss_cdp_raw.py`，不要随手在本集成内拆出新的抓取模块**（见 `CONTRIBUTING.md`「单文件原则」）。这条单文件规则不适用于 OfferAgent 的 `backend/`、`frontend/` 或其他模块；OfferAgent 根目录的 `docs/` 是正式项目资料，不适用原始 scraper 项目的“本地产物、不提交”约定。**例外**：`data/city_codes.json` 是城市码表数据（非逻辑代码），外置便于用户查看支持哪些城市；改它要同步跑 `tests.test_chrome_setup` 的城市码表防回归测试。
+**重要边界：本集成的核心抓取逻辑都放 `scripts/boss_cdp_raw.py`，不要随手在本集成内拆出新的抓取模块**（见 `CONTRIBUTING.md`「单文件原则」）。这条单文件规则不适用于 JobIntel 的 `backend/`、`frontend/` 或其他模块；JobIntel 根目录的 `docs/` 是正式项目资料，不适用原始 scraper 项目的“本地产物、不提交”约定。**例外**：`data/city_codes.json` 是城市码表数据（非逻辑代码），外置便于用户查看支持哪些城市；改它要同步跑 `tests.test_chrome_setup` 的城市码表防回归测试。
 
 ## 环境与命令
 
@@ -30,12 +30,12 @@ SKILL.md / README(.en).md / CHANGELOG.md / CONTRIBUTING.md
 
 ## 改代码时的硬规则
 
-1. **BOSS 集成版本号四处一致**：`scripts/boss_cdp_raw.py` 的 `__version__`（第 22 行附近）、仓库根目录 `pyproject.toml` 的 `[tool.offeragent.integrations.boss_zhipin]`、本目录 `SKILL.md`、本目录 `README.md` 必须同步，否则 `VersionConsistencyTests` 会挂。该版本号只表示 BOSS 集成本身，不表示 OfferAgent 整体版本。改版本号时四处一起改。
+1. **BOSS 集成版本号四处一致**：`scripts/boss_cdp_raw.py` 的 `__version__`（第 22 行附近）、仓库根目录 `pyproject.toml` 的 `[tool.jobintel.integrations.boss_zhipin]`、本目录 `SKILL.md`、本目录 `README.md` 必须同步，否则 `VersionConsistencyTests` 会挂。该版本号只表示 BOSS 集成本身，不表示 JobIntel 整体版本。改版本号时四处一起改。
 2. **异常处理**：禁止 bare `except:`，必须捕获具体类型（`requests.ConnectionError`、`json.JSONDecodeError` 等），和现有代码保持一致。
 3. **改了用户可见行为 → 更新 `README.md`；有意义变更 → `CHANGELOG.md` 顶部加一条。**
 4. **README 双语同步**：`README.md`（中文）和 `README.en.md`（英文）必须保持一致，改了其中一个就要同步另一个。
 5. **commit message 用 Conventional Commits**（`feat:` / `fix:` / `docs:` / `optimize:` / `refactor:` 等，见 `CONTRIBUTING.md`）。
-6. **动抓取链路必须真机验证**：凡改本集成的列表抓取、登录探测、详情链路的改动，合并前要在真机过一遍 `--check` → `--smoke` → `--pages 2 --no-detail`（Chrome 需已启动且已登录）。全 mock 单测覆盖不到浏览器的焦点、定时器节流、SPA 行为和风控——焦点仿真 bug 曾 96 个单测全绿而真机翻页静默失败。一次性验证脚本（spike）放 `/tmp`，不进仓库；普通 OfferAgent 后端、前端和离线 ETL 改动不以 live 爬取作为验收前置条件。
+6. **动抓取链路必须真机验证**：凡改本集成的列表抓取、登录探测、详情链路的改动，合并前要在真机过一遍 `--check` → `--smoke` → `--pages 2 --no-detail`（Chrome 需已启动且已登录）。全 mock 单测覆盖不到浏览器的焦点、定时器节流、SPA 行为和风控——焦点仿真 bug 曾 96 个单测全绿而真机翻页静默失败。一次性验证脚本（spike）放 `/tmp`，不进仓库；普通 JobIntel 后端、前端和离线 ETL 改动不以 live 爬取作为验收前置条件。
 7. **合规红线**：只做被动捕获（Network 域旁听页面自身请求）和请求节奏控制。**禁止**主动伪装类手段：指纹伪造、验证码绕过、代理池轮换。遇到 `_security_check` 验证页时提示用户人工处理，不自动绕过。
 
 ## 架构关键点（容易踩坑）
@@ -49,7 +49,7 @@ SKILL.md / README(.en).md / CHANGELOG.md / CONTRIBUTING.md
 
 ## 独立维护本集成时的提交流程
 
-以下流程适用于把 `integrations/boss_zhipin/` 作为独立上游项目维护或向其上游仓库提交贡献。在 OfferAgent 主仓库内开发时，分支、commit、PR 和发布操作以根目录 `AGENTS.md`、当前仓库实际配置和用户明确要求为准。
+以下流程适用于把 `integrations/boss_zhipin/` 作为独立上游项目维护或向其上游仓库提交贡献。在 JobIntel 主仓库内开发时，分支、commit、PR 和发布操作以根目录 `AGENTS.md`、当前仓库实际配置和用户明确要求为准。
 
 独立上游项目默认分支为 `master`，fork/分支工作流：从 `master` 拉新分支（`fix/...`、`feat/...`）→ 改代码补测试 → push → PR。一个 PR 只做一件事。**审 PR / 拉分支前先 `git fetch origin`**——本地 master 落后时 diff 范围会失真（曾把已合并的 #43 误判为 PR 夹带改动）。
 

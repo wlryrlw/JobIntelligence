@@ -15,7 +15,7 @@ async function start() {
   controller?.abort()
   controller = new AbortController()
   try {
-    snapshot.value = await api.createTask("岗位分析离线演示任务", "offeragent-demo")
+    snapshot.value = await api.createTask("岗位分析离线演示任务", "jobintel-demo")
     snapshot.value = await api.streamTaskEvents(snapshot.value.task_id, (event) => {
       events.value = [...events.value, event]
     }, controller!.signal)
@@ -30,8 +30,8 @@ onBeforeUnmount(() => controller?.abort())
 </script>
 
 <template>
-  <section class="demo-task-panel" aria-label="OfferAgent 离线任务演示">
-    <header><div><small>OFFERAGENT DEMO</small><strong>求职分析执行轨迹</strong></div><button :disabled="running" type="button" @click="start">{{ running ? "执行中…" : "运行演示" }}</button></header>
+  <section class="demo-task-panel" aria-label="JobIntel 离线任务演示">
+    <header><div><small>JOBINTEL DEMO</small><strong>求职分析执行轨迹</strong></div><button :disabled="running" type="button" @click="start">{{ running ? "执行中…" : "运行演示" }}</button></header>
     <p v-if="!events.length" class="empty">通过 SSE 查看可恢复的任务状态、心跳和完成事件。</p>
     <div v-else class="demo-events">
       <div v-for="event in events" :key="event.event_id" class="demo-event"><i></i><span>{{ event.payload.message || event.event_type }}</span><small>#{{ event.sequence }}</small></div>

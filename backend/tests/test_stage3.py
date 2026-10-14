@@ -23,7 +23,7 @@ from app.coordinator import Coordinator, CoordinatorClarification, DatasetAvaila
 from app.etl.pipeline import run_etl
 from app.preprocessing import PreparedRequest
 from app.security import AccessController
-from app.services.offeragent_service import OfferAgentService
+from app.services.jobintel_service import JobIntelService
 from app.workflows.query_graph import QueryWorkflow
 
 
@@ -437,7 +437,7 @@ def test_submit_async_resumes_non_crawl_clarification_for_legacy_clients() -> No
         route="career_advice",
         message="等待城市",
     )
-    service = object.__new__(OfferAgentService)
+    service = object.__new__(JobIntelService)
     service.access_controller = AccessController()
     service.config = SimpleNamespace(query_timeout_seconds=5)
     service.query_runs = FakeQueryRuns()

@@ -47,7 +47,7 @@ type SubmitShortcut = "enter" | "metaEnter"
 type ContextDropTarget = "result" | null
 
 const SAVED_TABLE_LIMIT = 8
-const RESUME_SESSION_KEY = "offeragent_resume"
+const RESUME_SESSION_KEY = "jobintel_resume"
 const MAX_RESUME_BYTES = 5 * 1024 * 1024
 const ACCEPTED_RESUME_EXTENSIONS = ["txt", "text", "md", "markdown", "pdf"]
 const prompts = [
@@ -615,17 +615,17 @@ function downloadCareerReport() {
 </script>
 
 <template>
-  <div v-if="!authReady" class="auth-loading"><span></span><p>正在连接 OfferAgent…</p></div>
+  <div v-if="!authReady" class="auth-loading"><span></span><p>正在连接 JobIntel…</p></div>
 
   <main v-else-if="!authUser" class="login-page">
     <section class="login-intro">
-      <div class="login-brand"><strong>OfferAgent</strong></div>
+      <div class="login-brand"><strong>JobIntel</strong></div>
       <div><p class="kicker">AI CAREER DECISION ASSISTANT</p><h1>让岗位数据，<br>服务于你的下一步。</h1><p>连接岗位市场与个人简历，分析技能差距、薪资口径和面试准备方向。</p></div>
       <small>ETL · QueryAgent · CareerAgent</small>
     </section>
     <section class="login-side">
       <form class="login-card" @submit.prevent="loginUser">
-        <header><div><h2>欢迎回来</h2><p>登录 OfferAgent</p></div></header>
+        <header><div><h2>欢迎回来</h2><p>登录 JobIntel</p></div></header>
         <label><span>账号</span><input v-model="loginUsername" autocomplete="username" placeholder="请输入账号"></label>
         <label><span>密码</span><input v-model="loginPassword" type="password" autocomplete="current-password" placeholder="请输入密码"></label>
         <p v-if="error" class="login-error">{{ error }}</p>
@@ -638,7 +638,7 @@ function downloadCareerReport() {
 
   <div v-else class="app-layout">
     <aside class="history-sidebar" :class="{ open: leftOpen }">
-      <div class="brand-row"><div><strong>OfferAgent</strong><small>求职决策助手</small></div></div>
+      <div class="brand-row"><div><strong>JobIntel</strong><small>求职决策助手</small></div></div>
       <button class="new-chat" :disabled="loading || !activeConversation?.turns.length" @click="createConversation"><span>＋</span>新建对话</button>
       <div class="sidebar-history-scroll">
         <nav class="history-list" aria-label="对话历史"><section v-for="group in historyGroups" :key="group.label"><p>{{ group.label }}</p><div v-for="item in group.items" :key="item.id" class="history-item" :class="{ active: item.id === activeConversationId }"><button class="history-select" @click="selectConversation(item.id)"><span class="chat-icon">◌</span><span><strong>{{ item.title }}</strong><small>{{ item.turns.length }} 轮对话</small></span></button><button class="history-remove" aria-label="删除对话" @click="removeConversation(item.id)">×</button></div></section></nav>
@@ -655,7 +655,7 @@ function downloadCareerReport() {
           <article v-for="(turn, turnIndex) in activeConversation?.turns" :key="`${turn.result.task_id}:${turnIndex}`" class="turn">
             <div class="user-message"><div class="message-avatar user">你</div><div class="message-body"><small>你</small><p>{{ turn.query }}</p></div></div>
             <div class="assistant-message"><div class="message-avatar assistant">AI</div><div class="message-body assistant-body">
-              <div class="answer-heading" :class="{ 'qa-heading': turn.result.route !== 'database_query' }"><div><small>OfferAgent</small><strong v-if="turn.result.route === 'database_query'">{{ turn.result.status === "failed" ? "处理失败" : turn.result.status === "waiting_clarification" ? "需要补充信息" : "岗位查询完成" }}</strong><strong v-else>{{ turn.result.route === "career_advice" ? "简历与岗位分析" : turn.result.route === "market_data_refresh" ? (turn.result.status === "waiting_clarification" ? "采集前确认" : "采集任务已创建") : turn.result.route === "direct_response" ? "OfferAgent 回复" : "岗位分析完成" }}</strong></div><span v-if="turn.result.route === 'database_query' && turn.result.status === 'completed'">{{ turn.result.workflow_mode === "query_agent" ? "QueryAgent" : "多库流程" }}</span></div>
+              <div class="answer-heading" :class="{ 'qa-heading': turn.result.route !== 'database_query' }"><div><small>JobIntel</small><strong v-if="turn.result.route === 'database_query'">{{ turn.result.status === "failed" ? "处理失败" : turn.result.status === "waiting_clarification" ? "需要补充信息" : "岗位查询完成" }}</strong><strong v-else>{{ turn.result.route === "career_advice" ? "简历与岗位分析" : turn.result.route === "market_data_refresh" ? (turn.result.status === "waiting_clarification" ? "采集前确认" : "采集任务已创建") : turn.result.route === "direct_response" ? "JobIntel 回复" : "岗位分析完成" }}</strong></div><span v-if="turn.result.route === 'database_query' && turn.result.status === 'completed'">{{ turn.result.workflow_mode === "query_agent" ? "QueryAgent" : "多库流程" }}</span></div>
               <ClarificationPanel v-if="turn.result.status === 'waiting_clarification'" :clarification="turn.result.clarification" @choose="chooseClarification(turn.result, $event)" />
               <ExecutionTimeline :steps="turn.result.steps" :attempts="turn.result.attempts" :status="turn.result.status" />
               <div v-if="turn.result.error_code === 'timeout'" class="timeout-notice">本次问答耗时 {{ ((turn.result.elapsed_ms || 0) / 1000).toFixed(1) }} 秒，在“{{ progressStageLabel(turn.result.failure_stage || 'timeout') }}”阶段超时，已停止继续等待。</div>

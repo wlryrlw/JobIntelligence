@@ -193,7 +193,7 @@ class CareerAgent:
             try:
                 raw = self.model_client.chat_json(
                     (
-                        "你是 OfferAgent 的岗位要求分析顾问。请认真阅读岗位画像统计和检索到的 JD，"
+                        "你是 JobIntel 的岗位要求分析顾问。请认真阅读岗位画像统计和检索到的 JD，"
                         "把证据转化成用户能理解、能用于准备求职的综合分析。"
                         "回答应优先聚焦用户问的技术点；例如询问 Python 时，具体总结 JD 明确提到的"
                         "Python 技能、框架、开发场景、工程要求和经验边界，再说明这些要求意味着什么。"

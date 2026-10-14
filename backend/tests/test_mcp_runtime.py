@@ -21,8 +21,8 @@ class McpRuntimeTest(unittest.TestCase):
         self.temp_dir.cleanup()
 
     def test_tool_list_contains_only_jobs_market_database_tool(self) -> None:
-        self.assertEqual(self.client.server.name, "offeragent-local-tools")
-        self.assertEqual(self.client.server.title, "OfferAgent本地数据库工具服务")
+        self.assertEqual(self.client.server.name, "jobintel-local-tools")
+        self.assertEqual(self.client.server.title, "JobIntel本地数据库工具服务")
         tools = self.client.list_tools()
         by_name = {tool["name"]: tool for tool in tools}
 

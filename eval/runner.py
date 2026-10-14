@@ -235,7 +235,7 @@ def run_benchmark(
         raise ValueError("cost_per_1k_tokens 不能小于 0")
     selected_dataset = _select_suite(dataset, suite)
     scope = _scope()
-    with tempfile.TemporaryDirectory(prefix="offeragent-eval-") as temporary:
+    with tempfile.TemporaryDirectory(prefix="jobintel-eval-") as temporary:
         database_root = _prepare_database(Path(temporary))
         engine = DuckDbEngine(database_root)
         metrics: list[CaseMetrics] = []
@@ -402,7 +402,7 @@ def _metrics_for_console(payload: Any) -> Any:
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description="运行 OfferAgent 离线 NL2SQL 评测")
+    parser = argparse.ArgumentParser(description="运行 JobIntel 离线 NL2SQL 评测")
     parser.add_argument("--dataset", choices=("seed", "eval_dev", "eval_test"), default="eval_test")
     parser.add_argument("--correction", choices=("on", "off"), default="on")
     parser.add_argument("--few-shot", choices=("on", "off"), default="on")

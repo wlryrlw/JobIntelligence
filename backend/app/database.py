@@ -1,10 +1,10 @@
 from __future__ import annotations
 
-"""OfferAgent 的岗位市场 Schema 契约。
+"""JobIntel 的岗位市场 Schema 契约。
 
 真实数据由 ETL 发布到 ``data/databases/jobs_market``；本模块只负责加载已发布
 Schema，并在本地快照尚不存在时提供同一份岗位数据契约，保证服务导入和权限计算
-仍然是确定的。非岗位业务的静态 Schema 不属于 OfferAgent，不在这里保留。
+仍然是确定的。非岗位业务的静态 Schema 不属于 JobIntel，不在这里保留。
 """
 
 from pathlib import Path

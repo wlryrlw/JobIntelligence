@@ -7,8 +7,8 @@ from app.security import AuthService
 
 
 class AuthServiceTest(unittest.TestCase):
-    def test_product_metadata_and_accounts_use_offeragent_domain(self) -> None:
-        self.assertEqual(app.title, "OfferAgent API")
+    def test_product_metadata_and_accounts_use_jobintel_domain(self) -> None:
+        self.assertEqual(app.title, "JobIntel API")
         auth = AuthService()
         admin = auth.login("admin", "admin123")
         candidate = auth.login("candidate", "candidate123")

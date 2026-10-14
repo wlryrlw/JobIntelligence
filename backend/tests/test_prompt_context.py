@@ -7,12 +7,12 @@ from app.prompt_context import PRODUCT_CONTEXT, with_product_context
 
 
 class PromptContextTest(unittest.TestCase):
-    def test_product_context_identifies_offeragent(self) -> None:
+    def test_product_context_identifies_jobintel(self) -> None:
         prompt = with_product_context("你负责结构化输出。")
 
-        self.assertIn("OfferAgent", prompt)
+        self.assertIn("JobIntel", prompt)
         self.assertIn("当前职责", prompt)
-        self.assertEqual(prompt.count("OfferAgent"), 3)
+        self.assertEqual(prompt.count("JobIntel"), 3)
 
     def test_model_client_injects_product_context_at_chat_boundary(self) -> None:
         client = ModelClient(Settings(api_key="test-key"))
@@ -24,7 +24,7 @@ class PromptContextTest(unittest.TestCase):
         payload = post.call_args.args[1]
         system = payload["messages"][0]["content"]
         self.assertIn(PRODUCT_CONTEXT, system)
-        self.assertIn("OfferAgent", system)
+        self.assertIn("JobIntel", system)
         self.assertIn("你负责回答用户问题", system)
 
 

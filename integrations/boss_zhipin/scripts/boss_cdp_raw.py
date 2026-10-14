@@ -1190,7 +1190,7 @@ def wait_for_login(cdp_port=DEFAULT_CDP_PORT, timeout=DEFAULT_LOGIN_TIMEOUT, int
 def open_login_page(cdp_port=DEFAULT_CDP_PORT):
     """Open the dedicated BOSS login page without waiting for user input.
 
-    The OfferAgent UI starts the browser in a separate request and lets the
+    The JobIntel UI starts the browser in a separate request and lets the
     user click “检查环境” after logging in, so this path must navigate the
     visible dedicated target even when ``--no-wait-login`` is used.
     """

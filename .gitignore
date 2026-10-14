@@ -9,6 +9,7 @@
 **/env/
 **/ENV/
 **/.env
+!**/.env.example
 .python311/
 .node/
 .downloads/

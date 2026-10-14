@@ -21,7 +21,7 @@ import type {
 } from "./types"
 
 const API_BASE = import.meta.env.VITE_API_BASE ?? ""
-const TOKEN_KEY = "offeragent_access_token"
+const TOKEN_KEY = "jobintel_access_token"
 
 function token() {
   return sessionStorage.getItem(TOKEN_KEY)

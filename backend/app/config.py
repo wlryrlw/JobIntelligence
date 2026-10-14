@@ -94,7 +94,7 @@ class Settings:
     rag_rerank_model: str = os.getenv("RAG_RERANK_MODEL", "")
     milvus_uri: str = (os.getenv("MILVUS_URI", "http://localhost:19530").strip() or "http://localhost:19530").rstrip("/")
     milvus_token: str = os.getenv("MILVUS_TOKEN", "")
-    milvus_collection: str = os.getenv("MILVUS_COLLECTION", "offeragent_job_jd").strip() or "offeragent_job_jd"
+    milvus_collection: str = os.getenv("MILVUS_COLLECTION", "jobintel_job_jd").strip() or "jobintel_job_jd"
     rag_dense_top_k: int = _env_int("RAG_DENSE_TOP_K", 50)
     rag_bm25_top_k: int = _env_int("RAG_BM25_TOP_K", 50)
     rag_rrf_k: int = _env_int("RAG_RRF_K", 60)

@@ -279,7 +279,7 @@ class JobSummaryTests(unittest.TestCase):
             self.assertIn("job_summary.py", document)
             self.assertIn("提示词", document)
         self.assertIn("cp boss-zhipin-scraper/scripts/job_summary.py", skill)
-        self.assertIn("[tool.offeragent.integrations.boss_zhipin]", pyproject)
+        self.assertIn("[tool.jobintel.integrations.boss_zhipin]", pyproject)
         self.assertIn("integrations/boss_zhipin/scripts/job_summary.py", readme)
 
 

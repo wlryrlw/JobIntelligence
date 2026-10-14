@@ -1692,7 +1692,7 @@ class VersionConsistencyTests(unittest.TestCase):
             pyproject = tomllib.load(handle)
         integration_version = (
             pyproject.get("tool", {})
-            .get("offeragent", {})
+            .get("jobintel", {})
             .get("integrations", {})
             .get("boss_zhipin", {})
             .get("version")

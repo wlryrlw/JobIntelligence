@@ -6,7 +6,7 @@ from app.querying.duckdb_engine import DuckDbEngine
 from app.security import AccessController
 
 
-def test_runtime_schema_contains_only_the_offeragent_job_database() -> None:
+def test_runtime_schema_contains_only_the_jobintel_job_database() -> None:
     assert DATABASE_LABELS == {"jobs_market": "岗位市场数据源"}
     assert {table["database"] for table in SCHEMA} == {"jobs_market"}
     assert all(table["id"].startswith("jobs_market.") for table in SCHEMA)

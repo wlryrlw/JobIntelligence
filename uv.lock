@@ -570,7 +570,7 @@ wheels = [
 ]
 
 [[package]]
-name = "offeragent"
+name = "jobintel"
 version = "0.1.0"
 source = { virtual = "." }
 dependencies = [
