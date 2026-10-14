@@ -85,12 +85,18 @@ class Coordinator:
             keyword,
         )
         keyword = re.split(
-            r"(?:通常如何|一般如何|如何|怎么|有哪些|有什么|岗位要求|任职要求|技能要求|技术栈|需要哪些)",
+            r"(?:通常如何|一般如何|如何|怎么|有哪些|有什么|岗位要求|任职要求|技能要求|技术栈|需要哪些|提到最多|出现最多|最常见|高频|常提到)",
             keyword,
             maxsplit=1,
         )[0]
         keyword = re.sub(r"(?:应届|经验不限|1\s*[-~至]\s*3\s*年|3\s*[-~至]\s*5\s*年|5\s*[-~至]\s*10\s*年)", " ", keyword)
         keyword = re.split(r"[，,。！？?;；]", keyword, maxsplit=1)[0]
+        keyword = re.sub(
+            r"(?:的\s*)?(?:jd|岗位描述|职位描述|招聘要求)(?=\s*$)",
+            " ",
+            keyword,
+            flags=re.IGNORECASE,
+        )
         keyword = re.sub(r"\s+", " ", keyword).strip(" ：:、")
         keyword = re.sub(r"^(?:的|在|于)\s*", "", keyword)
         if not keyword:

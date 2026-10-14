@@ -107,13 +107,13 @@ class RequestPreprocessorTest(unittest.TestCase):
         model = CountingModel("data_qa")
 
         result = RequestPreprocessor(model).prepare(
-            "上海 AI Agent 岗位最常见的技能有哪些？",
+            "上海 AI Agent 岗位有多少条？",
             "",
             has_data_context=False,
         )
 
         self.assertEqual(result.action, "database_query")
-        self.assertEqual(result.standalone_query, "上海 AI Agent 岗位最常见的技能有哪些？")
+        self.assertEqual(result.standalone_query, "上海 AI Agent 岗位有多少条？")
 
 
 if __name__ == "__main__":

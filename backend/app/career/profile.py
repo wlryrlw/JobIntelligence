@@ -22,7 +22,7 @@ class JobProfileError(ValueError):
 
 
 class JobProfileBuilder:
-    """从已发布岗位快照构建确定性的岗位画像。"""
+    """从已发布岗位快照构建确定性的岗位画像。薪资分位数统一为月度等价 K。"""
 
     def __init__(
         self,
@@ -114,7 +114,7 @@ class JobProfileBuilder:
             )
 
         salaries = [
-            (job.salary_annual_min_k + job.salary_annual_max_k) / 2
+            ((job.salary_annual_min_k + job.salary_annual_max_k) / 2) / 12
             for job in matched
             if job.salary_parse_status == "parsed"
             and job.salary_annual_min_k is not None

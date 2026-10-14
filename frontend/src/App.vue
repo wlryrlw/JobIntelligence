@@ -401,6 +401,30 @@ async function submit(text?: string) {
   }
 }
 
+async function chooseClarification(result: QueryResult, optionId: string) {
+  const option = result.clarification?.options.find((item) => item.id === optionId)
+  const query = option?.label || optionId
+  if (!option || loading.value || !activeConversation.value) return
+
+  loading.value = true
+  pendingQuery.value = query
+  progress.value = { stage: "clarification", message: "正在应用你的选择并继续分析", elapsedMs: 0 }
+  error.value = ""
+  scrollConversationToBottom({ force: true })
+  try {
+    const nextResult = await api.clarify(result.task_id, optionId)
+    activeConversation.value.turns.push({ query, result: nextResult })
+    saveActiveConversation()
+  } catch (caught) {
+    error.value = caught instanceof Error ? caught.message : "无法应用选择"
+    input.value = query
+  } finally {
+    loading.value = false
+    pendingQuery.value = ""
+    scrollConversationToBottom()
+  }
+}
+
 function progressStageLabel(stage: string) {
   const labels: Record<string, string> = {
     started: "启动",
@@ -578,16 +602,7 @@ function downloadCareerReport() {
     ...report.facts.map((item) => `- ${item}`),
     "",
     "## 技能覆盖",
-    ...report.skill_coverage.map((item) => `- ${item.skill}：${item.status === "covered" ? "已覆盖" : item.status === "partial" ? "部分覆盖" : "待补足"}；岗位出现率 ${item.jd_occurrence_rate == null ? "—" : `${(item.jd_occurrence_rate * 100).toFixed(0)}%`}；${item.suggestion || "无额外建议"}`),
-    "",
-    "## 优先建议",
-    ...report.recommendations.map((item) => `- ${item}`),
-    "",
-    "## 简历改写方向",
-    ...report.rewrite_directions.map((item) => `- ${item}`),
-    "",
-    "## 面试准备清单",
-    ...report.interview_checklist.map((item) => `- ${item}`),
+    ...report.skill_coverage.map((item) => `- ${item.skill}：${item.status === "covered" ? "已覆盖" : item.status === "partial" ? "部分覆盖" : "待补足"}；岗位出现率 ${item.jd_occurrence_rate == null ? "—" : `${(item.jd_occurrence_rate * 100).toFixed(0)}%`}`),
   ]
   const blob = new Blob(["\ufeff", lines.join("\n")], { type: "text/markdown;charset=utf-8" })
   const url = URL.createObjectURL(blob)
@@ -641,7 +656,7 @@ function downloadCareerReport() {
             <div class="user-message"><div class="message-avatar user">你</div><div class="message-body"><small>你</small><p>{{ turn.query }}</p></div></div>
             <div class="assistant-message"><div class="message-avatar assistant">AI</div><div class="message-body assistant-body">
               <div class="answer-heading" :class="{ 'qa-heading': turn.result.route !== 'database_query' }"><div><small>OfferAgent</small><strong v-if="turn.result.route === 'database_query'">{{ turn.result.status === "failed" ? "处理失败" : turn.result.status === "waiting_clarification" ? "需要补充信息" : "岗位查询完成" }}</strong><strong v-else>{{ turn.result.route === "career_advice" ? "简历与岗位分析" : turn.result.route === "market_data_refresh" ? (turn.result.status === "waiting_clarification" ? "采集前确认" : "采集任务已创建") : turn.result.route === "direct_response" ? "OfferAgent 回复" : "岗位分析完成" }}</strong></div><span v-if="turn.result.route === 'database_query' && turn.result.status === 'completed'">{{ turn.result.workflow_mode === "query_agent" ? "QueryAgent" : "多库流程" }}</span></div>
-              <ClarificationPanel v-if="turn.result.status === 'waiting_clarification'" :clarification="turn.result.clarification" @choose="submit" />
+              <ClarificationPanel v-if="turn.result.status === 'waiting_clarification'" :clarification="turn.result.clarification" @choose="chooseClarification(turn.result, $event)" />
               <ExecutionTimeline :steps="turn.result.steps" :attempts="turn.result.attempts" :status="turn.result.status" />
               <div v-if="turn.result.error_code === 'timeout'" class="timeout-notice">本次问答耗时 {{ ((turn.result.elapsed_ms || 0) / 1000).toFixed(1) }} 秒，在“{{ progressStageLabel(turn.result.failure_stage || 'timeout') }}”阶段超时，已停止继续等待。</div>
               <div v-if="turn.result.analysis_sources?.length" class="analysis-source-strip"><strong>综合分析来源</strong><span v-for="source in turn.result.analysis_sources" :key="source.task_id">▦ {{ source.title }} · {{ source.row_count }} 行</span></div>

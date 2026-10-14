@@ -29,7 +29,7 @@ class QueryRequest(BaseModel):
     # 求职分析的显式上下文。不能要求模型从自然语言中猜测随机 resume_id。
     resume_id: str | None = Field(default=None, min_length=8, max_length=200)
     target: TargetJobRequest | None = None
-    # 只有显式勾选“检索岗位 JD（RAG）”时才打开岗位证据检索。
+    # 显式勾选或问题明确询问 JD/岗位要求时打开岗位证据检索。
     use_jd_rag: bool = False
 
 

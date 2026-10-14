@@ -82,6 +82,15 @@ class OfferAgentService:
                         user_message=normalized,
                         user_id=access_scope.user_id,
                     )
+                elif option_id:
+                    # 兼容旧版客户端：即使把澄清文本作为普通查询提交，也要恢复原任务。
+                    result = await asyncio.to_thread(
+                        self.clarify,
+                        pending["result"].task_id,
+                        option_id,
+                        normalized,
+                        access_scope.user_id,
+                    )
             if result is None and parse_crawl_intent(normalized):
                 result = self._prepare_crawl_confirmation(
                     normalized,

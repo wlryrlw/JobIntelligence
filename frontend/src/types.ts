@@ -111,7 +111,6 @@ export interface SkillCoverageItem {
   requirement: "must_have" | "preferred" | "unknown"
   jd_evidence: EvidenceRef[]
   resume_evidence: EvidenceRef[]
-  suggestion?: string | null
   confidence: number
   extractor_version: string
   jd_occurrence_rate?: number | null
@@ -125,10 +124,7 @@ export interface CareerReport {
   target: TargetJobRequest
   job_profile: JobProfile
   facts: string[]
-  recommendations: string[]
   skill_coverage: SkillCoverageItem[]
-  rewrite_directions: string[]
-  interview_checklist: string[]
   generated_at: string
 }
 

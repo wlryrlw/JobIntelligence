@@ -17,14 +17,6 @@ class CareerAgentError(ValueError):
     """求职分析失败，不返回伪造的覆盖结论。"""
 
 
-class CareerAdvice(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    recommendations: list[str] = Field(default_factory=list, max_length=20)
-    rewrite_directions: list[str] = Field(default_factory=list, max_length=20)
-    interview_checklist: list[str] = Field(default_factory=list, max_length=20)
-
-
 class JobRequirementAnswer(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -32,7 +24,7 @@ class JobRequirementAnswer(BaseModel):
 
 
 class CareerAgent:
-    """只处理简历证据、岗位画像和建议，不抓网页、不编写 SQL。"""
+    """只处理简历证据和岗位画像，不抓网页、不编写 SQL。"""
 
     def __init__(
         self,
@@ -72,13 +64,10 @@ class CareerAgent:
             resume_evidence = [mention.evidence for mention in mentions[:3]]
             if item.skill not in resume_by_skill:
                 status = "missing"
-                suggestion = f"补足 {item.skill} 的真实项目或学习证据，再考虑写入简历。"
             elif item.skill in project_skills:
                 status = "covered"
-                suggestion = "保留现有项目证据，并核对技术动作和结果是否与 JD 表述一致。"
             else:
                 status = "partial"
-                suggestion = f"已有 {item.skill} 提及；建议补充真实项目中的职责、技术动作和可验证结果。"
             coverage.append(
                 SkillCoverageItem(
                     skill=item.skill,
@@ -87,7 +76,6 @@ class CareerAgent:
                     requirement=item.requirement,
                     jd_evidence=item.jd_evidence,
                     resume_evidence=resume_evidence,
-                    suggestion=suggestion,
                     confidence=max([mention.confidence for mention in mentions], default=0.0),
                     extractor_version=item.extractor_version,
                     jd_occurrence_rate=item.occurrence_rate,
@@ -104,30 +92,11 @@ class CareerAgent:
         ]
         if profile.small_sample_warning:
             facts.append(profile.small_sample_warning)
+        facts.append("薪资分位数统一为月度等价 K；年薪和多薪按年化总额除以 12，日薪按 22 天/月估算。")
         if rag_documents:
             facts.append(
                 f"JD RAG：从当前数据集检索并重排了 {len(rag_documents)} 段岗位证据；仅作为本次分析的可追溯上下文。"
             )
-        recommendations = [
-            item.suggestion
-            for item in coverage
-            if item.suggestion and item.status != "covered"
-        ]
-        rewrite_directions = [
-            f"只有在确有真实经历时，为 {item.skill} 补充项目背景、你的具体动作和可验证结果；没有量化证据时不要编造。"
-            for item in coverage
-            if item.status in {"partial", "missing"}
-        ]
-        interview_checklist = [
-            f"准备一个真实例子说明你如何使用 {item.skill}，并能解释个人职责和结果。"
-            for item in coverage
-            if item.status in {"covered", "partial"}
-        ]
-        if self.use_llm:
-            advice = self._llm_advice(resume, profile, coverage, rag_documents or [])
-            recommendations = advice.recommendations or recommendations
-            rewrite_directions = advice.rewrite_directions or rewrite_directions
-            interview_checklist = advice.interview_checklist or interview_checklist
 
         summary = (
             f"已根据 {profile.valid_jd_count} 份有效 JD 和简历结构化证据完成分析。"
@@ -144,10 +113,7 @@ class CareerAgent:
             target=profile.target,
             job_profile=profile,
             facts=facts,
-            recommendations=list(dict.fromkeys(recommendations))[:20],
             skill_coverage=coverage,
-            rewrite_directions=list(dict.fromkeys(rewrite_directions))[:20],
-            interview_checklist=list(dict.fromkeys(interview_checklist))[:20],
         )
 
     def answer_job_requirement(
@@ -155,6 +121,8 @@ class CareerAgent:
         query: str,
         profile: JobProfile,
         rag_documents: list[RetrievedJd],
+        *,
+        use_llm: bool | None = None,
     ) -> str:
         if not rag_documents:
             raise CareerAgentError("岗位 JD RAG 没有返回可引用的岗位证据")
@@ -166,20 +134,75 @@ class CareerAgent:
             f"[JD {index}] {item.title or '未命名岗位'} / {item.company or '未知公司'}：{item.text[:700]}"
             for index, item in enumerate(rag_documents, start=1)
         ]
-        if self.use_llm:
-            if self.model_client is None:
-                raise CareerAgentError("启用岗位要求 LLM 整理时必须提供 ModelClient")
+        should_use_llm = self.use_llm if use_llm is None else use_llm
+        if should_use_llm:
+            if self.model_client is None or not self.model_client.enabled:
+                raise CareerAgentError("岗位要求综合解读需要配置主模型 LLM_API_KEY")
+            profile_skills = sorted(
+                profile.skills,
+                key=lambda item: (
+                    item.skill.casefold() not in query.casefold(),
+                    -item.occurrence_rate,
+                    item.skill.casefold(),
+                ),
+            )
+            skill_summary = [
+                {
+                    "skill": item.skill,
+                    "requirement": item.requirement,
+                    "occurrence_count": item.occurrence_count,
+                    "valid_jd_denominator": item.denominator,
+                    "occurrence_rate": item.occurrence_rate,
+                }
+                for item in profile_skills[:40]
+            ]
+            evidence = [
+                {
+                    "reference": f"[JD {index}]",
+                    "job_id": item.job_id,
+                    "title": item.title or "未命名岗位",
+                    "company": item.company or "未知公司",
+                    "city": item.city,
+                    "experience": item.experience,
+                    "text": item.text,
+                }
+                for index, item in enumerate(rag_documents, start=1)
+            ]
             payload = {
                 "query": query,
                 "target": profile.target.model_dump(mode="json"),
-                "profile_skills": skill_lines,
-                "retrieved_jd_evidence": evidence_lines,
-                "instruction": "只能根据给定 JD 证据总结要求；无法由证据支持的内容必须明确说未发现，不能补造市场事实。",
+                "sample_scope": {
+                    "job_count": profile.sample_size,
+                    "valid_jd_count": profile.valid_jd_count,
+                    "small_sample_warning": profile.small_sample_warning,
+                },
+                "profile_skill_summary": skill_summary,
+                "retrieved_jd_evidence": evidence,
+                "instruction": (
+                    "面向求职者综合归纳检索到的岗位 JD，回答 query 中具体询问的要求。"
+                    "profile_skill_summary 是当前目标样本上的统计，retrieved_jd_evidence 是可引用的原文证据。"
+                    "不要逐条复述 JD，也不要只输出高频技能清单；归纳不同 JD 的共同点和差异，"
+                    "解释这些要求对应的实际工作能力，并给出基于证据的求职准备建议。"
+                    "清楚区分‘JD 明确要求’和‘综合解读’，解读可以推断工作含义，但必须标注为推断。"
+                    "不得补造未在证据或统计中出现的语言版本、框架、年限、硬性门槛、市场结论或技能要求。"
+                    "关于频率，只能使用 profile_skill_summary 中的 count/denominator；"
+                    "检索到的 JD 数量不能当作全量岗位频率。没有明确证据的方面要说明当前样本未发现。"
+                    "具体岗位事实就近引用 [JD n]；统计结论说明统计分母。"
+                ),
             }
             try:
                 raw = self.model_client.chat_json(
-                    "你是岗位要求分析器。只返回严格 JSON：{\"answer\":\"Markdown回答\"}。"
-                    "将岗位要求分为核心技能、工作内容、经验与学历、加分项，并在结论中保留 [JD n] 引用。",
+                    (
+                        "你是 OfferAgent 的岗位要求分析顾问。请认真阅读岗位画像统计和检索到的 JD，"
+                        "把证据转化成用户能理解、能用于准备求职的综合分析。"
+                        "回答应优先聚焦用户问的技术点；例如询问 Python 时，具体总结 JD 明确提到的"
+                        "Python 技能、框架、开发场景、工程要求和经验边界，再说明这些要求意味着什么。"
+                        "如果证据只提到 Python 而未列出框架或版本，必须直说未明确列出，不能凭常识补全。"
+                        "不要照抄长段 JD，不要把每个岗位拆成一条摘要。"
+                        "建议使用 Markdown 标题：要求概括、JD 明确要求、综合解读、准备建议、样本说明。"
+                        "保留 [JD n] 引用，并用一两句话解释综合解读来自哪些证据。"
+                        "只返回严格 JSON：{\"answer\":\"Markdown回答\"}。"
+                    ),
                     json.dumps(payload, ensure_ascii=False),
                 )
                 return JobRequirementAnswer.model_validate(raw).answer
@@ -203,52 +226,4 @@ class CareerAgent:
         ]
         return "\n".join(lines)
 
-    def _llm_advice(
-        self,
-        resume: ResumeEvidence,
-        profile: JobProfile,
-        coverage: list[SkillCoverageItem],
-        rag_documents: list[RetrievedJd],
-    ) -> CareerAdvice:
-        if self.model_client is None:
-            raise CareerAgentError("启用建议层 LLM 时必须提供 ModelClient")
-        payload = {
-            "resume_id": resume.resume_id,
-            "facts": [
-                {
-                    "skill": item.skill,
-                    "status": item.status,
-                    "requirement": item.requirement,
-                    "jd_evidence": [evidence.quote for evidence in item.jd_evidence],
-                    "resume_evidence": [evidence.quote for evidence in item.resume_evidence],
-                }
-                for item in coverage
-            ],
-            "instruction": "只组织建议语言，不添加输入中不存在的经历、技术、指标或结果。",
-            "retrieved_jd_evidence": [
-                {
-                    "title": item.title,
-                    "company": item.company,
-                    "quote": item.text[:700],
-                }
-                for item in rag_documents[:8]
-            ],
-        }
-        system = (
-            "你是求职建议语言组织器。只返回严格 JSON："
-            '{"recommendations":[],"rewrite_directions":[],"interview_checklist":[]}'
-            "。事实已由程序计算，你不能新增事实；STAR 改写只能使用给定证据。"
-        )
-        try:
-            raw = self.model_client.chat_json(
-                system,
-                json.dumps(payload, ensure_ascii=False),
-            )
-            return CareerAdvice.model_validate(raw)
-        except QueryTimeoutError:
-            raise
-        except (RuntimeError, TypeError, ValueError, ValidationError) as exc:
-            raise CareerAgentError(f"建议层 structured output 校验失败：{type(exc).__name__}") from exc
-
-
-__all__ = ["CareerAdvice", "CareerAgent", "CareerAgentError"]
+__all__ = ["CareerAgent", "CareerAgentError", "JobRequirementAnswer"]

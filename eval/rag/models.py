@@ -119,7 +119,7 @@ class RagEvidence(BaseModel):
     company: str = Field(default="", max_length=300)
     city: str = Field(default="", max_length=100)
     experience: str = Field(default="", max_length=100)
-    snippet: str = Field(min_length=1, max_length=1200)
+    snippet: str = Field(min_length=1, max_length=2000)
 
 
 class RagAnswerCase(BaseModel):

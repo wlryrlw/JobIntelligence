@@ -1,11 +1,15 @@
 from __future__ import annotations
 
+import asyncio
 import io
+from types import SimpleNamespace
 from pathlib import Path
 
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
+from langgraph.checkpoint.memory import InMemorySaver
+from langgraph.types import Command
 from pypdf import PdfWriter
 
 from app.api import routes
@@ -13,10 +17,13 @@ from app.career import CareerAgent, ResumeStore, SkillCatalog
 from app.career.resume import ResumeLimits, ResumeParseError, extract_resume_evidence, parse_resume
 from app.career.skills import SkillExtractionError
 from app.career.profile import JobProfileBuilder
-from app.contracts import TargetJobRequest
+from app.contracts import TargetJobRequest, UserRequest
 from app.models import QueryResult
-from app.coordinator import Coordinator
+from app.coordinator import Coordinator, CoordinatorClarification, DatasetAvailability, RouteDecision
 from app.etl.pipeline import run_etl
+from app.preprocessing import PreparedRequest
+from app.security import AccessController
+from app.services.offeragent_service import OfferAgentService
 from app.workflows.query_graph import QueryWorkflow
 
 
@@ -180,8 +187,18 @@ def test_career_agent_reports_evidence_backed_coverage(tmp_path: Path) -> None:
     assert coverage["FastAPI"].status == "covered"
     assert coverage["RAG"].status == "missing"
     assert all(item.jd_evidence for item in report.skill_coverage)
-    assert all("20%" not in recommendation for recommendation in report.recommendations)
+    assert all("suggestion" not in item.model_dump() for item in report.skill_coverage)
+    assert "recommendations" not in report.model_dump()
     assert report.job_profile.valid_jd_count == 2
+
+
+def test_job_profile_salary_percentiles_are_monthly_equivalent(tmp_path: Path) -> None:
+    database_root, _ = build_market(tmp_path)
+    profile = JobProfileBuilder(database_root).build(
+        TargetJobRequest(keyword="AI Agent", city="上海")
+    )
+
+    assert profile.salary_p50_k == pytest.approx(22.0042)
 
 
 def test_resume_store_is_owner_scoped_and_does_not_store_full_text(tmp_path: Path) -> None:
@@ -223,6 +240,80 @@ def test_career_workflow_returns_completed_report(tmp_path: Path) -> None:
     assert result.career_report is not None
     assert result.career_report.resume_id == response.resume_id
     assert payload["workflow_mode"] == "career_agent"
+
+
+def test_career_clarification_resumes_with_selected_city() -> None:
+    class StubPreprocessor:
+        def prepare(self, *_args: object, **_kwargs: object) -> PreparedRequest:
+            return PreparedRequest(
+                action="career_advice",
+                confidence=1.0,
+                reason="测试职业分析城市澄清",
+                target=TargetJobRequest(keyword="Agent开发"),
+                resume_id="resume_123456",
+                career_mode="resume_gap",
+            )
+
+    class StubCoordinator:
+        def __init__(self) -> None:
+            self.requests: list[UserRequest] = []
+
+        def decide(self, request: UserRequest, *, action: str, career_mode: str | None) -> RouteDecision:
+            self.requests.append(request)
+            if len(self.requests) == 1:
+                return RouteDecision(
+                    action="clarify",
+                    target=TargetJobRequest(keyword="Agent开发"),
+                    clarification=CoordinatorClarification(
+                        parameter="city",
+                        question="请选择目标城市。",
+                        reason="城市会改变岗位样本。",
+                        options=[{"id": "上海", "label": "上海", "description": "查询上海岗位市场"}],
+                    ),
+                    reason="缺少城市筛选条件",
+                )
+            return RouteDecision(
+                action="request_crawl",
+                target=TargetJobRequest(keyword="Agent开发", city="上海"),
+                availability=DatasetAvailability(
+                    available=False,
+                    reason="测试数据集不可用",
+                    keyword="Agent开发",
+                    city="上海",
+                ),
+                reason="测试数据集不可用",
+            )
+
+    workflow = object.__new__(QueryWorkflow)
+    workflow.preprocessor = StubPreprocessor()
+    workflow.coordinator = StubCoordinator()
+    workflow.checkpointer = InMemorySaver()
+    workflow.graph = workflow._compile()
+
+    first = workflow.invoke(
+        {
+            "task_id": "task-career-city",
+            "session_id": "session-career-city",
+            "query": "我的简历中最匹配什么agent开发技能",
+            "workspace": {},
+            "access_scope": {"user_id": "demo_candidate"},
+        },
+        "task-career-city",
+    )
+
+    assert first.status == "waiting_clarification"
+    assert first.clarification is not None
+    assert first.clarification.parameter == "city"
+
+    second = workflow.invoke(
+        Command(resume={"option_id": "上海"}),
+        "task-career-city",
+    )
+
+    assert second.status == "failed"
+    assert len(workflow.coordinator.requests) == 2
+    resumed_request = workflow.coordinator.requests[1]
+    assert resumed_request.target == TargetJobRequest(keyword="Agent开发", city="上海")
 
 
 def test_resume_upload_and_delete_api_are_explicit(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -288,3 +379,100 @@ def test_query_api_forwards_explicit_career_context(monkeypatch: pytest.MonkeyPa
     assert response.status_code == 200, response.text
     assert calls["resume_id"] == "resume_123456"
     assert calls["target"] == TargetJobRequest(keyword="AI Agent", city="上海")
+
+
+def test_clarification_api_forwards_option_id(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls: dict[str, object] = {}
+
+    class StubService:
+        def clarify(self, task_id: str, option_id: str, user_id: str) -> QueryResult:
+            calls.update(task_id=task_id, option_id=option_id, user_id=user_id)
+            return QueryResult(
+                task_id=task_id,
+                status="completed",
+                route="career_advice",
+                message="ok",
+            )
+
+    app = FastAPI()
+    app.include_router(routes.router)
+    monkeypatch.setattr(routes, "service", StubService())
+    response = TestClient(app).post(
+        "/api/tasks/task-career/clarify",
+        json={"option_id": "上海"},
+    )
+
+    assert response.status_code == 200, response.text
+    assert calls == {
+        "task_id": "task-career",
+        "option_id": "上海",
+        "user_id": "local_user",
+    }
+
+
+def test_submit_async_resumes_non_crawl_clarification_for_legacy_clients() -> None:
+    class FakeQueryRuns:
+        def __init__(self) -> None:
+            self.finished: list[tuple[str, QueryResult]] = []
+
+        def start(self, _task_id: str, _owner_id: str) -> None:
+            return None
+
+        def finish(self, task_id: str, result: QueryResult) -> None:
+            self.finished.append((task_id, result))
+
+    class FakeContext:
+        def __init__(self, pending: dict[str, object]) -> None:
+            self.pending = pending
+
+        def latest_pending(self, _session_id: str) -> dict[str, object]:
+            return self.pending
+
+        def match_clarification(self, _text: str, _result: QueryResult) -> str:
+            return "上海"
+
+    pending_result = QueryResult(
+        task_id="original-task",
+        status="waiting_clarification",
+        route="career_advice",
+        message="等待城市",
+    )
+    service = object.__new__(OfferAgentService)
+    service.access_controller = AccessController()
+    service.config = SimpleNamespace(query_timeout_seconds=5)
+    service.query_runs = FakeQueryRuns()
+    service.context = FakeContext({"user_id": "demo_candidate", "result": pending_result})
+    calls: dict[str, object] = {}
+
+    def fake_clarify(
+        task_id: str,
+        option_id: str,
+        user_message: str | None = None,
+        user_id: str | None = None,
+    ) -> QueryResult:
+        calls.update(task_id=task_id, option_id=option_id, user_message=user_message, user_id=user_id)
+        return QueryResult(
+            task_id=task_id,
+            status="completed",
+            route="career_advice",
+            message="已恢复",
+        )
+
+    service.clarify = fake_clarify
+    result = asyncio.run(
+        service.submit_async(
+            "上海",
+            "session-career",
+            user_id="demo_candidate",
+            task_id="follow-up-task",
+        )
+    )
+
+    assert result.status == "completed"
+    assert calls == {
+        "task_id": "original-task",
+        "option_id": "上海",
+        "user_message": "上海",
+        "user_id": "demo_candidate",
+    }
+    assert service.query_runs.finished == [("follow-up-task", result)]

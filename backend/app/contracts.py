@@ -155,7 +155,7 @@ class JobProfileSkill(BaseModel):
 
 
 class JobProfile(BaseModel):
-    """由岗位快照确定性聚合得到的岗位画像。"""
+    """由岗位快照确定性聚合得到的岗位画像；薪资分位数是月度等价 K。"""
 
     model_config = ConfigDict(extra="forbid")
 
@@ -165,9 +165,9 @@ class JobProfile(BaseModel):
     valid_jd_count: int = Field(ge=1)
     skills: list[JobProfileSkill] = Field(default_factory=list, max_length=200)
     salary_sample_count: int = Field(ge=0)
-    salary_p25_k: float | None = Field(default=None, ge=0)
-    salary_p50_k: float | None = Field(default=None, ge=0)
-    salary_p75_k: float | None = Field(default=None, ge=0)
+    salary_p25_k: float | None = Field(default=None, ge=0, description="月度等价薪资 P25，单位 K")
+    salary_p50_k: float | None = Field(default=None, ge=0, description="月度等价薪资 P50，单位 K")
+    salary_p75_k: float | None = Field(default=None, ge=0, description="月度等价薪资 P75，单位 K")
     experience_distribution: dict[str, int] = Field(default_factory=dict)
     degree_distribution: dict[str, int] = Field(default_factory=dict)
     small_sample_warning: str | None = Field(default=None, max_length=300)
@@ -456,7 +456,6 @@ class SkillCoverageItem(BaseModel):
     requirement: Literal["must_have", "preferred", "unknown"] = "unknown"
     jd_evidence: list[EvidenceRef] = Field(default_factory=list, max_length=10)
     resume_evidence: list[EvidenceRef] = Field(default_factory=list, max_length=10)
-    suggestion: str | None = Field(default=None, max_length=1000)
     confidence: float = Field(default=0, ge=0, le=1)
     extractor_version: str = Field(default="unknown", max_length=100)
     jd_occurrence_rate: float | None = Field(default=None, ge=0, le=1)
@@ -472,10 +471,7 @@ class CareerReport(BaseModel):
     target: TargetJobRequest
     job_profile: JobProfile
     facts: list[str] = Field(default_factory=list, max_length=100)
-    recommendations: list[str] = Field(default_factory=list, max_length=50)
     skill_coverage: list[SkillCoverageItem] = Field(default_factory=list, max_length=200)
-    rewrite_directions: list[str] = Field(default_factory=list, max_length=50)
-    interview_checklist: list[str] = Field(default_factory=list, max_length=50)
     generated_at: datetime = Field(default_factory=utc_now)
 
 

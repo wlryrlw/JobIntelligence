@@ -106,8 +106,22 @@ class QueryWorkflow:
         )
         builder.add_edge("respond_directly", END)
         builder.add_edge("answer_qa", END)
-        builder.add_edge("coordinate_career", END)
-        builder.add_edge("human_clarification", "query_agent")
+        builder.add_conditional_edges(
+            "coordinate_career",
+            self._route_after_coordinate,
+            {
+                "human_clarification": "human_clarification",
+                "end": END,
+            },
+        )
+        builder.add_conditional_edges(
+            "human_clarification",
+            self._route_after_clarification,
+            {
+                "coordinate_career": "coordinate_career",
+                "query_agent": "query_agent",
+            },
+        )
         builder.add_conditional_edges(
             "query_agent",
             lambda state: "human_clarification" if state.get("clarification") else "end",
@@ -138,6 +152,15 @@ class QueryWorkflow:
         if action == "database_query":
             return "query_agent"
         return {"direct_response": "respond_directly", "data_qa": "answer_qa"}[action]
+
+    @staticmethod
+    def _route_after_coordinate(state: QueryState) -> str:
+        return "human_clarification" if state.get("clarification") else "end"
+
+    @staticmethod
+    def _route_after_clarification(state: QueryState) -> str:
+        action = str((state.get("intent") or {}).get("action"))
+        return "coordinate_career" if action == "career_advice" else "query_agent"
 
     def _preprocess(self, state: QueryState) -> dict[str, Any]:
         """生成路由、独立查询和 SQL 生成所需的查询口径。"""
@@ -529,7 +552,7 @@ class QueryWorkflow:
                 "检查简历与岗位参数",
                 "加载用户隔离的结构化简历证据",
                 "构建带样本口径和证据的岗位画像",
-                "完成技能覆盖、改写方向和面试清单分析",
+                "完成技能覆盖分析",
             ],
             workflow_mode="career_agent",
             execution_log=execution_log,
@@ -559,7 +582,7 @@ class QueryWorkflow:
             )
             emit_progress("career_analysis", "正在整理岗位要求分析")
             answer = self.career_agent.answer_job_requirement(
-                state["query"], profile, rag_documents
+                state["query"], profile, rag_documents, use_llm=True
             )
         except (CareerAgentError, JobProfileError, RagError, ValueError) as exc:
             result = QueryResult(
@@ -594,7 +617,7 @@ class QueryWorkflow:
                 "构建目标岗位画像",
                 "Milvus BM25 + Embedding 双路召回",
                 "RRF 融合并进行候选重排",
-                "基于岗位 JD 证据整理要求分析",
+                "LLM 基于岗位 JD 证据归纳要求并给出综合解读",
             ],
             workflow_mode="career_agent_job_requirement",
             execution_log=[
@@ -639,4 +662,18 @@ class QueryWorkflow:
             **dict(workspace.get("confirmed_parameters") or {}),
             parameter: option_id,
         }
-        return {"workspace": workspace, "clarification": None, "result": {}}
+        target = state.get("target")
+        if target is not None and parameter in {
+            "keyword",
+            "city",
+            "company",
+            "experience",
+            "degree",
+        }:
+            target = {**target, parameter: option_id}
+        return {
+            "workspace": workspace,
+            "target": target,
+            "clarification": None,
+            "result": {},
+        }

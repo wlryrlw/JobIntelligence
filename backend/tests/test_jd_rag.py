@@ -31,6 +31,21 @@ def test_explicit_jd_rag_forces_job_requirement_career_route() -> None:
     assert result.target.experience == "3-5年"
 
 
+def test_jd_frequency_question_automatically_uses_job_requirement_route() -> None:
+    result = RequestPreprocessor(NoCallModel()).prepare(
+        "上海agent开发的jd，提到最多的是什么",
+        "",
+        use_jd_rag=False,
+    )
+
+    assert result.action == "career_advice"
+    assert result.career_mode == "job_requirement"
+    assert result.source == "jd_requirement_rule"
+    assert result.target is not None
+    assert result.target.keyword == "agent开发"
+    assert result.target.city == "上海"
+
+
 def test_jd_rag_fails_explicitly_when_not_configured(tmp_path: Path) -> None:
     config = Settings(
         rag_enabled=False,

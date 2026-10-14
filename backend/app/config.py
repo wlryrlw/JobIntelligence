@@ -76,7 +76,7 @@ class Settings:
     career_llm_enabled: bool = os.getenv("CAREER_LLM_ENABLED", "false").lower() in {
         "1", "true", "yes", "on"
     }
-    # JD RAG 配置：默认关闭。只有用户显式打开前端“检索岗位 JD（RAG）”并完成这些配置后才会调用。
+    # JD RAG 配置：默认关闭；显式开关或明确的 JD 要求问题才会调用。
     rag_enabled: bool = _env_bool("RAG_ENABLED")
     rag_api_key: str = os.getenv("RAG_API_KEY", "")
     rag_embedding_base_url: str = (os.getenv(

@@ -5,7 +5,7 @@ const props = defineProps<{
   clarification: QueryResult["clarification"]
 }>()
 
-const emit = defineEmits<{ choose: [label: string] }>()
+const emit = defineEmits<{ choose: [optionId: string] }>()
 </script>
 
 <template>
@@ -13,7 +13,7 @@ const emit = defineEmits<{ choose: [label: string] }>()
     <p>{{ props.clarification.question }}</p>
     <small>{{ props.clarification.reason }}</small>
     <div class="clarification-options">
-      <button v-for="option in props.clarification.options" :key="option.id" type="button" @click="emit('choose', option.label)">
+      <button v-for="option in props.clarification.options" :key="option.id" type="button" @click="emit('choose', option.id)">
         {{ option.label }}<span v-if="option.recommended">推荐</span>
       </button>
     </div>

@@ -58,6 +58,9 @@
 
 使用已有独立 Qwen Judge 配置 `JUDGE_API_KEY`、`JUDGE_BASE_URL`、`JUDGE_MODEL`，不会使用主 DeepSeek 的 `LLM_*` 配置：
 
+`answer_runner` 会通过主 `LLM_*` 模型生成与线上岗位要求问答相同类型的综合解读，因此运行它前需要配置 `LLM_API_KEY`。
+`CAREER_LLM_ENABLED` 不影响这条岗位要求总结链路。
+
 ```bash
 .venv/bin/python -m eval.rag.answer_runner \
   --output eval/rag/answers.jsonl

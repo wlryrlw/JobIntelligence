@@ -11,6 +11,7 @@ from app.config import settings
 from app.contracts import TargetJobRequest
 from app.career.agent import CareerAgent
 from app.career.profile import JobProfileBuilder
+from app.model_client import ModelClient
 from app.rag.service import JdRagService
 
 from .dataset import (
@@ -45,7 +46,11 @@ def generate_answers(
     )
     validate_golden_set(dataset, rows, coverage)
     profile_builder = JobProfileBuilder(service.database_root, use_llm=False)
-    career_agent = CareerAgent(profile_builder=profile_builder, use_llm=False)
+    career_agent = CareerAgent(
+        ModelClient(settings),
+        profile_builder=profile_builder,
+        use_llm=False,
+    )
     answers: list[RagAnswerCase] = []
     for case in dataset.cases:
         target = TargetJobRequest(**case.target.model_dump(mode="json"))
@@ -66,7 +71,9 @@ def generate_answers(
             )
         if hits:
             profile = career_agent.build_profile(target)
-            answer = career_agent.answer_job_requirement(case.query, profile, hits)
+            answer = career_agent.answer_job_requirement(
+                case.query, profile, hits, use_llm=True
+            )
             evidence = [
                 RagEvidence(
                     chunk_id=hit.chunk_id,
@@ -75,7 +82,7 @@ def generate_answers(
                     company=hit.company,
                     city=hit.city,
                     experience=hit.experience,
-                    snippet=hit.text[:1200],
+                    snippet=hit.text[:2000],
                 )
                 for hit in hits
             ]
