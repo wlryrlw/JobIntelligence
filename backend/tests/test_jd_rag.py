@@ -69,3 +69,59 @@ def test_rrf_merge_is_rank_based() -> None:
 
     assert {item["chunk_id"] for item in merged} == {"a", "b"}
     assert merged[0]["rrf_score"] == merged[1]["rrf_score"]
+
+
+def test_retrieval_variants_isolate_bm25_and_embedding(monkeypatch: pytest.MonkeyPatch) -> None:
+    class FakeEmbedding:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def embed(self, texts: list[str]) -> list[list[float]]:
+            self.calls += 1
+            return [[0.1, 0.2] for _ in texts]
+
+    class FakeClient:
+        def __init__(self) -> None:
+            self.fields: list[str] = []
+
+        def search(self, **kwargs: object) -> list[list[dict[str, object]]]:
+            field = str(kwargs["anns_field"])
+            self.fields.append(field)
+            item = {
+                "id": f"{field}-chunk",
+                "entity": {
+                    "chunk_id": f"{field}-chunk",
+                    "job_id": f"{field}-job",
+                    "text": f"{field} evidence",
+                    "city": "上海",
+                    "experience": "3-5年",
+                    "dataset_version": "ds-test",
+                },
+            }
+            return [[item]]
+
+    config = Settings(
+        rag_enabled=True,
+        rag_api_key="test",
+        rag_embedding_model="test",
+        rag_embedding_dimension=2,
+        rag_rerank_enabled=False,
+        rag_rerank_top_k=2,
+    )
+    service = JdRagService(config)
+    embedding = FakeEmbedding()
+    client = FakeClient()
+    monkeypatch.setattr(service, "embedding", embedding)
+    monkeypatch.setattr(service, "_milvus_client", lambda: client)
+    monkeypatch.setattr(service, "ensure_index", lambda: ("ds-test", 2))
+    target = TargetJobRequest(keyword="Agent", city="上海", experience="3-5年")
+
+    sparse = service.retrieve_variant("RAG", target, variant="bm25", top_k=1)
+    assert [item.job_id for item in sparse] == ["sparse_vector-job"]
+    assert embedding.calls == 0
+    assert client.fields == ["sparse_vector"]
+
+    dense = service.retrieve_variant("RAG", target, variant="embedding", top_k=1)
+    assert [item.job_id for item in dense] == ["dense_vector-job"]
+    assert embedding.calls == 1
+    assert client.fields[-1] == "dense_vector"

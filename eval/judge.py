@@ -91,9 +91,25 @@ class JudgeClient:
         self.config = config
         self._client = ModelClient(settings)
 
-    async def evaluate(self, system_prompt: str, payload: dict[str, object]) -> JudgeVerdict:
+    async def evaluate_json(
+        self,
+        system_prompt: str,
+        payload: dict[str, object],
+    ) -> dict[str, object]:
+        """调用独立 Judge 模型并返回已确认是对象的 JSON。
+
+        SQL Judge 继续通过 ``evaluate`` 做 ``JudgeVerdict`` 校验；RAG
+        Judge 使用同一套 Qwen API 配置，但有自己的 Pydantic 输出契约。
+        """
+
         raw = await self._client.achat_json(
             system_prompt,
             json.dumps(payload, ensure_ascii=False),
         )
+        if not isinstance(raw, dict):
+            raise TypeError("Judge API 返回的 JSON 不是对象")
+        return {str(key): value for key, value in raw.items()}
+
+    async def evaluate(self, system_prompt: str, payload: dict[str, object]) -> JudgeVerdict:
+        raw = await self.evaluate_json(system_prompt, payload)
         return JudgeVerdict.model_validate(raw)

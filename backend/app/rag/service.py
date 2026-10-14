@@ -11,7 +11,7 @@ from ..contracts import TargetJobRequest
 from ..etl.models import Job, JobDetail
 from ..etl.pipeline import read_rows
 from .clients import BailianEmbeddingClient, BailianRerankClient, RAGApiError
-from .models import JdDocument, RetrievedJd
+from .models import JdDocument, RagRetrievalVariant, RetrievedJd
 
 
 logger = logging.getLogger(__name__)
@@ -51,38 +51,73 @@ class JdRagService:
         *,
         dataset_version: str | None = None,
     ) -> list[RetrievedJd]:
+        return self.retrieve_variant(
+            query,
+            target,
+            variant="full",
+            top_k=self.config.rag_rerank_top_k,
+            dataset_version=dataset_version,
+        )
+
+    def retrieve_variant(
+        self,
+        query: str,
+        target: TargetJobRequest,
+        *,
+        variant: RagRetrievalVariant,
+        top_k: int | None = None,
+        dataset_version: str | None = None,
+    ) -> list[RetrievedJd]:
+        """按固定检索变体返回岗位 JD 证据。
+
+        生产请求使用 ``full``。评测 runner 使用另外两个变体隔离检索组件：
+        ``bm25`` 只走 Milvus 稀疏检索，``embedding`` 只走 dense 检索，
+        ``full`` 走双路召回、RRF 和（启用时）Rerank。
+        """
+        if variant not in {"bm25", "embedding", "full"}:
+            raise ValueError(f"不支持的 JD RAG 检索变体：{variant}")
         self._validate_config()
         version, _ = self.ensure_index()
         requested_version = dataset_version or version
+        result_limit = max(1, top_k or self.config.rag_rerank_top_k)
         client = self._milvus_client()
         filter_expr = self._filter_expression(target, requested_version)
+        dense_hits: Any = []
+        bm25_hits: Any = []
         try:
-            dense_vector = self.embedding.embed([query])[0]
-            dense_hits = client.search(
-                collection_name=self.config.milvus_collection,
-                data=[dense_vector],
-                anns_field="dense_vector",
-                limit=max(1, self.config.rag_dense_top_k),
-                filter=filter_expr,
-                output_fields=self.OUTPUT_FIELDS,
-                search_params={"metric_type": "COSINE", "params": {}},
-            )
-            bm25_hits = client.search(
-                collection_name=self.config.milvus_collection,
-                data=[query],
-                anns_field="sparse_vector",
-                limit=max(1, self.config.rag_bm25_top_k),
-                filter=filter_expr,
-                output_fields=self.OUTPUT_FIELDS,
-                search_params={"metric_type": "BM25", "params": {}},
-            )
+            if variant in {"embedding", "full"}:
+                dense_vector = self.embedding.embed([query])[0]
+                dense_hits = client.search(
+                    collection_name=self.config.milvus_collection,
+                    data=[dense_vector],
+                    anns_field="dense_vector",
+                    limit=max(result_limit, self.config.rag_dense_top_k),
+                    filter=filter_expr,
+                    output_fields=self.OUTPUT_FIELDS,
+                    search_params={"metric_type": "COSINE", "params": {}},
+                )
+            if variant in {"bm25", "full"}:
+                bm25_hits = client.search(
+                    collection_name=self.config.milvus_collection,
+                    data=[query],
+                    anns_field="sparse_vector",
+                    limit=max(result_limit, self.config.rag_bm25_top_k),
+                    filter=filter_expr,
+                    output_fields=self.OUTPUT_FIELDS,
+                    search_params={"metric_type": "BM25", "params": {}},
+                )
         except Exception as exc:
             raise RagError(f"Milvus JD 检索失败：{type(exc).__name__}: {exc}") from exc
 
         dense = self._flatten_hits(dense_hits)
         sparse = self._flatten_hits(bm25_hits)
+        if variant == "bm25":
+            return [RetrievedJd.model_validate(item) for item in sparse[:result_limit]]
+        if variant == "embedding":
+            return [RetrievedJd.model_validate(item) for item in dense[:result_limit]]
+
         merged = self._rrf_merge(dense, sparse)
-        candidates = merged[: max(self.config.rag_rerank_top_k * 8, 20)]
+        candidates = merged[: max(self.config.rag_rerank_top_k * 8, result_limit, 20)]
         if not candidates:
             return []
         if self.config.rag_rerank_enabled:
@@ -90,7 +125,7 @@ class JdRagService:
                 ranked = self.rerank.rerank(
                     query,
                     [item["text"] for item in candidates],
-                    max(1, self.config.rag_rerank_top_k),
+                    result_limit,
                 )
             except RAGApiError as exc:
                 raise RagError(f"JD Rerank 失败：{exc}") from exc
@@ -104,7 +139,12 @@ class JdRagService:
                     )
                 )
             return result
-        return [RetrievedJd.model_validate(item) for item in candidates[: self.config.rag_rerank_top_k]]
+        return [RetrievedJd.model_validate(item) for item in candidates[:result_limit]]
+
+    def load_documents(self) -> list[JdDocument]:
+        """读取当前已发布岗位快照，供索引和离线评测共用同一数据边界。"""
+
+        return self._load_current_documents()
 
     def ensure_index(self) -> tuple[str, int]:
         self._validate_config()
